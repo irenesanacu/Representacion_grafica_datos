@@ -51,6 +51,8 @@ def update_graph(selectedData):
 
         group_merge_left.drop(columns=["count_selected"],inplace=True)
         print(group_merge_left)
+        print(type(group_merge_left["group"][0]))
+        print(type(group_merge_left["count_initial"]))
 
         return px.bar(group_merge_left, x="group", y="count_initial", text_auto=True, title="Número de puntos seleccionados")
 
