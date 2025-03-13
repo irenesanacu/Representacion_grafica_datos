@@ -26,9 +26,9 @@ app.layout= html.Div([html.H3("Selecciona puntos con el lazo para ver las gráfi
 )
 
 def update_graph(selectedData):
-    group_counts = todos_los_grupos.copy()
+    #group_counts = todos_los_grupos.copy()
         #group_counts["count"] = 0
-    group_counts = pd.DataFrame({"group": todos_los_grupos["group"], "count": [0] * len(todos_los_grupos)})
+    #group_counts = pd.DataFrame({"group": todos_los_grupos["group"], "count": [0] * len(todos_los_grupos)})
 
         #if not selectedData:
 
@@ -37,20 +37,15 @@ def update_graph(selectedData):
         #selected_points = selectedData.get("points", []) #Da error por el caso en el que todavía no se han seleccionado datos
     selected_points = selectedData["points"] if selectedData and "points" in selectedData else []
     print(len(selected_points))
-    if selected_points:
-        selected_indices = [point["pointIndex"] for point in selected_points]
-        selected_df = datos.iloc[selected_indices].copy()
-        selected_df["group"] = selected_df["group"].astype(str)
-        #selected_df = pd.DataFrame(selected_points)
-        counts = selected_df["group"].value_counts().reset_index()
-        counts.columns = ["group", "count"]
-        # Unir con el DataFrame base para asegurarnos de que todos los grupos aparecen
-        #group_counts = group_counts.merge(counts, on="group", how="left").fillna(0)
-        # Graficar los datos seleccionados
-        counts["group"] = counts["group"].astype(str)
-        counts["count"] = counts["count"].astype(int)
-        print(counts)
-        return px.bar(counts, x="group", y="count",title="Puntos seleccionados")
+   # if selected_points:
+    selected_indices = [point["pointIndex"] for point in selected_points]
+    selected_df = datos.iloc[selected_indices].copy()
+    selected_df["group"] = selected_df["group"].astype(str)
+    group_counts = selected_df["group"].value_counts().reset_index()
+    group_counts.columns = ["group", "count"]
+
+    return px.bar(group_counts, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
+
     # Ejecutar la app
 if __name__ == "__main__":
         app.run_server(debug=True)
