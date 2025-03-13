@@ -46,7 +46,7 @@ def update_graph(selectedData):
         print(group_merge_left)
 
         group_merge_left["count_initial"] += group_merge_left["count_selected"].fillna(0)
-        group_merge_left["count_initial"].astype(int)
+        group_merge_left["count_initial"]=group_merge_left["count_initial"].astype(int)
         print(group_merge_left)
 
         group_merge_left.drop(columns=["count_selected"],inplace=True)
