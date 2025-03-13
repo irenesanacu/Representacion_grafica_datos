@@ -26,9 +26,8 @@ app.layout= html.Div([html.H3("Selecciona puntos con el lazo para ver las gráfi
 )
 
 def update_graph(selectedData):
-    #group_counts = todos_los_grupos.copy()
-        #group_counts["count"] = 0
-    #group_counts = pd.DataFrame({"group": todos_los_grupos["group"], "count": [0] * len(todos_los_grupos)})
+
+    group_initial = pd.DataFrame({"group": todos_los_grupos["group"], "count": [0] * len(todos_los_grupos)})
 
         #if not selectedData:
 
@@ -37,14 +36,23 @@ def update_graph(selectedData):
         #selected_points = selectedData.get("points", []) #Da error por el caso en el que todavía no se han seleccionado datos
     selected_points = selectedData["points"] if selectedData and "points" in selectedData else []
     print(len(selected_points))
-   # if selected_points:
-    selected_indices = [point["pointIndex"] for point in selected_points]
-    selected_df = datos.iloc[selected_indices].copy()
-    selected_df["group"] = selected_df["group"].astype(str)
-    group_counts = selected_df["group"].value_counts().reset_index()
-    group_counts.columns = ["group", "count"]
+    if selected_points:
+        selected_indices = [point["pointIndex"] for point in selected_points]
+        selected_df = datos.iloc[selected_indices].copy()
+        selected_df["group"] = selected_df["group"].astype(str)
+        group_counts = selected_df["group"].value_counts().reset_index()
+        group_counts.columns = ["group", "count"]
+        group_merge_left=group_initial.merge(group_counts,on="group",how="left", suffixes=("_initial", "_selected"))
+        print(group_merge_left)
 
-    return px.bar(group_counts, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
+        group_merge_left["count_initial"] += group_merge_left["count_selected"].fillna(0)
+        group_merge_left["count_initial"].astype(int)
+        print(group_merge_left)
+
+        group_merge_left.drop(columns=["count_selected"],inplace=True)
+        print(group_merge_left)
+
+        return px.bar(group_merge_left, x="group", y="count_initial", text_auto=True, title="Número de puntos seleccionados")
 
     # Ejecutar la app
 if __name__ == "__main__":
