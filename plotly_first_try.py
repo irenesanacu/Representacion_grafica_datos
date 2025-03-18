@@ -26,8 +26,8 @@ app.layout= html.Div([html.H3("Selecciona puntos con el lazo para ver las gráfi
 )
 
 def update_graph(selectedData):
-
-    group_initial = pd.DataFrame({"group": todos_los_grupos["group"], "count": [0] * len(todos_los_grupos)})
+    group_initial = pd.DataFrame({"group": todos_los_grupos, "count": 0})
+    #group_initial = pd.DataFrame({"group": todos_los_grupos["group"], "count": [0] * len(todos_los_grupos)})
 
         #if not selectedData:
 
@@ -53,7 +53,6 @@ def update_graph(selectedData):
         print(group_merge_left)
         print(type(group_merge_left["group"][0]))
         print(type(group_merge_left["count_initial"][0]))
-
         return px.bar(group_merge_left, x="group", y="count_initial", text_auto=True, title="Número de puntos seleccionados")
 
     # Ejecutar la app
