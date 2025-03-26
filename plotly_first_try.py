@@ -1,38 +1,41 @@
-
 import plotly.express as px
 import pandas as pd
 import dash
 from dash import dcc, html, Input, Output, State
 
 datos_original = pd.read_csv("datos.txt")
-datos=datos_original.copy()
+datos = datos_original.copy()
 # Si no existe la columna "grupo_manual", créala
 if "grupo_manual" not in datos.columns:
     datos["grupo_manual"] = datos["group"]  # Inicialmente, es igual a "group"
-datos['id']=datos.index
+datos['id'] = datos.index
 todos_los_grupos = pd.DataFrame({"group": datos["group"].astype(str).unique()})
-print(type(todos_los_grupos))
 app = dash.Dash(__name__)
 
-app.layout= html.Div([html.H3("Selecciona puntos con el lazo para ver las gráficas"),
-                          dcc.Graph(id="scatter-plot",figure = px.scatter(datos,x="x",y="y",color="group",hover_data="group")),
-                          html.Hr(),
-                          html.H3("Datos de los puntos seleccionados"),
-                          dcc.Graph(id="selected-data"),
-                          html.H3("Asignar nuevo grupo a los puntos seleccionados"),
-                          dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
-                          html.Button("Asignar grupo", id="asignar-grupo-btn"),
-                          html.Div(id="confirmacion-asignacion")
-                          ])
+app.layout = html.Div([html.H3("Selecciona puntos con el lazo para ver las gráficas"),
+                       dcc.Graph(id="scatter-plot",
+                                 figure=px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])),
+                       html.Hr(),
+                       html.H3("Datos de los puntos seleccionados"),
+                       dcc.Graph(id="selected-data"),
+                       html.H3("Asignar nuevo grupo a los puntos seleccionados"),
+                       dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
+                       html.Button("Asignar grupo", id="asignar-grupo-btn"),
+                       html.Div(id="confirmacion-asignacion"),
+                       html.Button("Calcular porcentaje", id="calcular_porcentaje"),
+                       html.Div(id="porcentaje")
+                       ])
 
 
 @app.callback(
-        Output("selected-data", "figure"),
-        Input("scatter-plot", "selectedData")
+    Output("selected-data", "figure"),
+    Input("scatter-plot", "selectedData")
 )
-
 def update_graph(selectedData):
-
+    print('update graph')
+    print(selectedData)
+    print('datos')
+    print(datos)
     # Inicializar un DataFrame con todos los grupos y conteos en 0
     todos_los_grupos = datos["group"].astype(str).unique()
     group_initial = pd.DataFrame({"group": todos_los_grupos, "count": 0})
@@ -41,6 +44,8 @@ def update_graph(selectedData):
     selected_points = selectedData["points"] if selectedData and "points" in selectedData else []
     print(f"Número de puntos seleccionados: {len(selected_points)}")
 
+    print('selected_points: ')
+    print(selected_points)
     if selected_points:
         # Extraer los índices de los puntos seleccionados
         selected_indices = [point["pointIndex"] for point in selected_points]
@@ -65,13 +70,13 @@ def update_graph(selectedData):
     group_merge["group"] = pd.to_numeric(group_merge["group"])
 
     # Ordenar el DataFrame por la columna "group"
-    #group_merge = group_merge.sort_values(by="group")
+    # group_merge = group_merge.sort_values(by="group")
 
     print("DataFrame final:")
     print(group_merge)
-
     # Crear el gráfico de barras
     return px.bar(group_merge, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
+
 
 @app.callback(
     Output("confirmacion-asignacion", "children"),
@@ -80,8 +85,11 @@ def update_graph(selectedData):
     State("nuevo-grupo", "value"),
     State("scatter-plot", "selectedData"),
     prevent_initial_call=True
-    )
+)
 def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
+    print('assing group')
+    print(selectedData)
+    print('----------------------')
     if not nuevo_grupo:
         return "Por favor, ingresa un nuevo grupo.", dash.no_update
 
@@ -89,17 +97,33 @@ def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
         # Extraer los índices de los puntos seleccionados
         selected_indices = [point["pointIndex"] for point in selectedData["points"]]
 
+        print('selected_indices')
+        print(selected_indices)
         # Asignar el nuevo grupo a los puntos seleccionados
         datos.loc[selected_indices, "grupo_manual"] = nuevo_grupo
+        print('datos')
+        print(datos)
 
         # Actualizar el gráfico de dispersión con los nuevos grupos
-        fig = px.scatter(datos, x="x", y="y", color="grupo_manual", hover_data=["group"])
+        fig = px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])
+        print('-------------')
+        print(datos)
         return f"Grupo '{nuevo_grupo}' asignado correctamente.", fig
     else:
         return "No hay puntos seleccionados.", dash.no_update
 
     # Ejecutar la app
 
+@app.callback(
+    Output("porcentaje", "children"),
+    Input("calcular_porcentaje", "n_clicks"),
+    prevent_initial_call=True
+)
+def percentage(click):
+    aciertos = (datos["grupo_manual"] == datos["group"]).sum()
 
+    porcent=aciertos/len(datos)*100
+
+    return "El porcentaje de acierto es: ",porcent,"%"
 if __name__ == "__main__":
-        app.run_server(debug=True)
+    app.run(debug=True)
