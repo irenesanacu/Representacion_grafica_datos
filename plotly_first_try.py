@@ -1,23 +1,58 @@
+import numpy as np
+from sklearn.cluster import DBSCAN
+from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import pandas as pd
 import dash
 from dash import dcc, html, Input, Output, State
+import dash_bootstrap_components as dbc
+
+"""
+Añadir botones para ir eligiendo que algoritmo se representa y diferentes datos.
+"""
+
 
 datos_original = pd.read_csv("datos.txt")
 datos = datos_original.copy()
+clust_algorithms=['none','DBscan']
+datasets={
+    'Formas': datos
+
+}
+app = dash.Dash(__name__)
+
 # Si no existe la columna "grupo_manual", créala
+if "grupo_DBscan" not in datos.columns:
+    coords=datos[['x','y']]
+    dbscan = DBSCAN(eps=1.1, min_samples=5)
+    datos["grupo_DBscan"] =dbscan.fit_predict(coords)
 if "grupo_manual" not in datos.columns:
     datos["grupo_manual"] = datos["group"]  # Inicialmente, es igual a "group"
 datos['id'] = datos.index
 todos_los_grupos = pd.DataFrame({"group": datos["group"].astype(str).unique()})
-app = dash.Dash(__name__)
 
-app.layout = html.Div([html.H3("Selecciona puntos con el lazo para ver las gráficas"),
-                       dcc.Graph(id="scatter-plot",
-                                 figure=px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])),
+app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
+
+
+                        # Selector de dataset
+
+                        "Selecciona los datos y el metodo de clusterizacion"),
+                        dcc.Dropdown(
+                                id='data_dropdown',
+                                options=[{'label': k, 'value': k} for k in datasets.keys()],
+                                value=list(datasets.keys())[0]
+                            ),
+                        html.Div(id='dataset_selected'),
+                        html.Label("Selecciona el algoritmo de clustering"),
+                        dcc.Dropdown(
+                            id='algorithm_dropdown',
+                            options=[{'label': k, 'value': k} for k in clust_algorithms],
+                            value='none'  # valor inicial, será actualizado dinámicamente
+                        ),
+
                        html.Hr(),
                        html.H3("Datos de los puntos seleccionados"),
-                       dcc.Graph(id="selected-data"),
+                       dcc.Graph(id="scatter-plot"),
                        html.H3("Asignar nuevo grupo a los puntos seleccionados"),
                        dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
                        html.Button("Asignar grupo", id="asignar-grupo-btn"),
@@ -25,7 +60,46 @@ app.layout = html.Div([html.H3("Selecciona puntos con el lazo para ver las gráf
                        html.Button("Calcular porcentaje", id="calcular_porcentaje"),
                        html.Div(id="porcentaje")
                        ])
+@app.callback(
+    Output('scatter-plot','figure'),
+    Input('data_dropdown', 'value'),
+    Input('algorithm_dropdown', 'value')
 
+)
+def print_dots(dataset_value,algorithm):
+    df=datasets[dataset_value]
+
+    if algorithm == 'none':
+
+        figure = px.scatter(df, x="x", y="y", color="group",
+                            hover_data=["group", "grupo_manual"])
+    elif algorithm == 'DBscan':
+        dbscan = DBSCAN(eps=1.1, min_samples=5)
+        df["grupo_DBscan"] = dbscan.fit_predict(coords)
+        figure = px.scatter(df, x="x", y="y", color="grupo_DBscan",
+                            hover_data=["group", "grupo_manual", "grupo_DBscan"])
+    return figure
+
+@app.callback(
+    Output('grafico', 'figure'),
+    Input('data_dropdown', 'value'),
+    Input('algorithm_dropdown', 'value')
+)
+def actualizar_grafico(dataset_seleccionado, columna_y):
+    df = datasets[dataset_seleccionado]
+    fig = px.scatter(df, x='x', y=columna_y, title=f'{columna_y} vs x en {dataset_seleccionado}')
+    return fig
+"""
+@app.callback(
+    Output('dataset_selected', 'children'),
+    Output('scatter-plot','figure'),
+    Input('data_dropdown', 'value'),
+    Input('algorithm_dropdown', 'value')
+)
+def Data_selection(valor_seleccionado):
+    datos = datasets[valor_seleccionado]
+    return f"Seleccionaste: {valor_seleccionado}, con datos: {datos}"
+    """
 
 @app.callback(
     Output("selected-data", "figure"),
@@ -77,7 +151,7 @@ def update_graph(selectedData):
     # Crear el gráfico de barras
     return px.bar(group_merge, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
 
-
+"""
 @app.callback(
     Output("confirmacion-asignacion", "children"),
     Output("scatter-plot", "figure"),
@@ -114,6 +188,7 @@ def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
 
     # Ejecutar la app
 
+"""
 @app.callback(
     Output("porcentaje", "children"),
     Input("calcular_porcentaje", "n_clicks"),
@@ -127,3 +202,4 @@ def percentage(click):
     return "El porcentaje de acierto es: ",porcent,"%"
 if __name__ == "__main__":
     app.run(debug=True)
+
