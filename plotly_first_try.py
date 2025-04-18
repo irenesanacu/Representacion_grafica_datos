@@ -12,8 +12,8 @@ Añadir botones para ir eligiendo que algoritmo se representa y diferentes datos
 """
 
 
-datos_original = pd.read_csv("datos.txt")
-datos = datos_original.copy()
+datos_formas = pd.read_csv("datos.txt")
+datos = datos_formas.copy()
 clust_algorithms=['none','DBscan']
 datasets={
     'Formas': datos
