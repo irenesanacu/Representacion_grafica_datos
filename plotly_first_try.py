@@ -14,9 +14,13 @@ Añadir botones para ir eligiendo que algoritmo se representa y diferentes datos
 
 datos_formas = pd.read_csv("datos.txt")
 datos = datos_formas.copy()
+data_compound=pd.read_csv("compound.txt")
+pathbased=pd.read_csv("pathbased_1")
 clust_algorithms=['none','DBscan']
 datasets={
-    'Formas': datos
+    'Pathbased':pathbased,
+    'Formas': datos,
+    'Compound':data_compound
 
 }
 app = dash.Dash(__name__)
@@ -68,7 +72,9 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
 )
 def print_dots(dataset_value,algorithm):
     df=datasets[dataset_value]
-
+    coords=df[['x','y']]
+    if "grupo_manual" not in df.columns:
+        df["grupo_manual"] = df["group"]
     if algorithm == 'none':
 
         figure = px.scatter(df, x="x", y="y", color="group",
@@ -79,7 +85,7 @@ def print_dots(dataset_value,algorithm):
         figure = px.scatter(df, x="x", y="y", color="grupo_DBscan",
                             hover_data=["group", "grupo_manual", "grupo_DBscan"])
     return figure
-
+"""
 @app.callback(
     Output('grafico', 'figure'),
     Input('data_dropdown', 'value'),
@@ -87,8 +93,10 @@ def print_dots(dataset_value,algorithm):
 )
 def actualizar_grafico(dataset_seleccionado, columna_y):
     df = datasets[dataset_seleccionado]
+    print('1')
     fig = px.scatter(df, x='x', y=columna_y, title=f'{columna_y} vs x en {dataset_seleccionado}')
     return fig
+    """
 """
 @app.callback(
     Output('dataset_selected', 'children'),
@@ -103,15 +111,18 @@ def Data_selection(valor_seleccionado):
 
 @app.callback(
     Output("selected-data", "figure"),
+
     Input("scatter-plot", "selectedData")
 )
-def update_graph(selectedData):
+def update_graph(selectedData,dataset_value):
+    df=datasets[dataset_value]
+
     print('update graph')
     print(selectedData)
     print('datos')
-    print(datos)
+    print(df)
     # Inicializar un DataFrame con todos los grupos y conteos en 0
-    todos_los_grupos = datos["group"].astype(str).unique()
+    todos_los_grupos = df["group"].astype(str).unique()
     group_initial = pd.DataFrame({"group": todos_los_grupos, "count": 0})
 
     # Obtener los puntos seleccionados (si los hay)
@@ -123,7 +134,7 @@ def update_graph(selectedData):
     if selected_points:
         # Extraer los índices de los puntos seleccionados
         selected_indices = [point["pointIndex"] for point in selected_points]
-        selected_df = datos.iloc[selected_indices].copy()
+        selected_df = df.iloc[selected_indices].copy()
         selected_df["group"] = selected_df["group"].astype(str)
 
         # Contar los puntos seleccionados por grupo
