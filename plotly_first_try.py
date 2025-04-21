@@ -53,7 +53,19 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                             options=[{'label': k, 'value': k} for k in clust_algorithms],
                             value='none'  # valor inicial, será actualizado dinámicamente
                         ),
-
+                        dcc.Store(id='store-dbscan-parametros'),
+                        dbc.Modal([
+                                dbc.ModalHeader("Introduce el valor de epsilon y el minimo de puntos"),
+                                dbc.ModalBody([
+                                    dcc.Input(id='input-eps', type='number', placeholder='Escribe epsilon',
+                                              style={"width": "100%"}),
+                                    dcc.Input(id='input-min', type='number', placeholder='Escribe el numero min', style={"width": "100%"}),
+                                ]),
+                                dbc.ModalFooter([
+                                    html.Button("Aceptar", id="guardar-numero", n_clicks=0, className="btn btn-primary"),
+                                    html.Button("Cerrar", id="close-modal", n_clicks=0, className="btn btn-secondary")
+                                ]),
+                            ], id="modal", is_open=False),
                        html.Hr(),
                        html.H3("Datos de los puntos seleccionados"),
                        dcc.Graph(id="scatter-plot"),
@@ -64,23 +76,59 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                        html.Button("Calcular porcentaje", id="calcular_porcentaje"),
                        html.Div(id="porcentaje")
                        ])
+# Callback para abrir/cerrar modal
+@app.callback(
+    Output("modal", "is_open"),
+    Input('algorithm_dropdown', 'value'),
+    [State("modal", "is_open")]
+)
+def toggle_modal(algorithm,is_open):
+    if algorithm =='DBscan':
+        return  True
+    else:
+        return False
+# Callback para mostrar el número introducido
+@app.callback(
+    Output('store-dbscan-parametros', 'data'),
+    Input("guardar-numero", "n_clicks"),
+    State("input-min", "value"),
+    State("input-eps", "value"),
+
+    prevent_initial_call=True
+)
+def guardar_numero(n_clicks, n_min,eps):
+    print(eps)
+    if eps is None or n_min is None:
+        return dash.no_update  # Evita guardar si algún campo está vacío
+    else:
+        print("guardado")
+    return {'eps': eps, 'n_min': n_min}
+
 @app.callback(
     Output('scatter-plot','figure'),
     Input('data_dropdown', 'value'),
-    Input('algorithm_dropdown', 'value')
+    Input('algorithm_dropdown', 'value'),
+    Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
 
 )
-def print_dots(dataset_value,algorithm):
+def print_dots(dataset_value,algorithm,dbscan_params):
     df=datasets[dataset_value]
+    print(dbscan_params)
+    if dbscan_params:
+        print("Recibe parametros")
+    eps = dbscan_params.get('eps', 1.1) if dbscan_params else 1.1
+    n_min = dbscan_params.get('n_min', 5) if dbscan_params else 5
+    print("eps: ",eps)
+    print("n_min: ",n_min)
     coords=df[['x','y']]
     if "grupo_manual" not in df.columns:
         df["grupo_manual"] = df["group"]
     if algorithm == 'none':
 
         figure = px.scatter(df, x="x", y="y", color="group",
-                            hover_data=["group", "grupo_manual"])
+                            hover_data=["group","grupo_manual"])
     elif algorithm == 'DBscan':
-        dbscan = DBSCAN(eps=1.1, min_samples=5)
+        dbscan = DBSCAN(eps=eps, min_samples=n_min)
         df["grupo_DBscan"] = dbscan.fit_predict(coords)
         figure = px.scatter(df, x="x", y="y", color="grupo_DBscan",
                             hover_data=["group", "grupo_manual", "grupo_DBscan"])
