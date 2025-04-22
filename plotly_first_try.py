@@ -1,4 +1,5 @@
 import numpy as np
+import hdbscan
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 import plotly.express as px
@@ -16,7 +17,7 @@ datos_formas = pd.read_csv("datos.txt")
 datos = datos_formas.copy()
 data_compound=pd.read_csv("compound.txt")
 pathbased=pd.read_csv("pathbased_1")
-clust_algorithms=['none','DBscan']
+clust_algorithms=['none','DBscan','HDBscan']
 datasets={
     'Pathbased':pathbased,
     'Formas': datos,
@@ -54,18 +55,27 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                             value='none'  # valor inicial, será actualizado dinámicamente
                         ),
                         dcc.Store(id='store-dbscan-parametros'),
-                        dbc.Modal([
-                                dbc.ModalHeader("Introduce el valor de epsilon y el minimo de puntos"),
-                                dbc.ModalBody([
-                                    dcc.Input(id='input-eps', type='number', placeholder='Escribe epsilon',
-                                              style={"width": "100%"}),
-                                    dcc.Input(id='input-min', type='number', placeholder='Escribe el numero min', style={"width": "100%"}),
-                                ]),
-                                dbc.ModalFooter([
-                                    html.Button("Aceptar", id="guardar-numero", n_clicks=0, className="btn btn-primary"),
-                                    html.Button("Cerrar", id="close-modal", n_clicks=0, className="btn btn-secondary")
-                                ]),
-                            ], id="modal", is_open=False),
+                        dbc.Button("Configurar DBSCAN", id="btn-popover", n_clicks=0),
+                        dbc.Popover(
+                                [
+                                    dbc.PopoverHeader("Parámetros DBSCAN"),
+                                    dbc.PopoverBody([
+                                        dcc.Input(id='input-eps', type='number', placeholder='Epsilon', style={'width': '100%', 'marginBottom': '10px'}),
+                                        dcc.Input(id='input-min', type='number', placeholder='Min samples', style={'width': '100%'}),
+                                        html.Br(),
+                                        html.Br(),
+                                        dbc.Button("Guardar", id="guardar-numero", size="sm", color="primary")
+                                    ])
+                                ],
+                                id="popover-dbscan",
+                                target="btn-popover",  # Ancla el popover al botón
+                               # trigger="click",       # Se abre al hacer clic
+                                placement="bottom",    # Aparece debajo del botón
+                                is_open=False          # Estado inicial cerrado
+                            ),
+
+
+
                        html.Hr(),
                        html.H3("Datos de los puntos seleccionados"),
                        dcc.Graph(id="scatter-plot"),
@@ -76,17 +86,49 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                        html.Button("Calcular porcentaje", id="calcular_porcentaje"),
                        html.Div(id="porcentaje")
                        ])
+
+"""
+dbc.Button("Seleccion parametros", id="abrir-modal", n_clicks=0),
+                        dbc.Modal([
+                                dbc.ModalHeader("Introduce el valor de epsilon y el minimo de puntos"),
+                                dbc.ModalBody([
+                                    dcc.Input(id='input-eps', type='number', placeholder='Escribe epsilon',
+                                              style={"width": "100%"}),
+                                    dcc.Input(id='input-min', type='number', placeholder='Escribe el numero min', style={"width": "100%"}),
+                                ]),
+                                dbc.ModalFooter([
+                                    html.Button("Aceptar", id="guardar-numero", n_clicks=0, className="btn btn-primary")
+                                ]),
+                            ], id="modal", is_open=False),
+"""
+#Callback para abrir/cerrar popover
+
+@app.callback(
+    Output("popover-dbscan", "is_open"),
+    Input("btn-popover", "n_clicks"),
+    State("popover-dbscan", "is_open"),
+    prevent_initial_call=True
+)
+def toggle_popover(n_clicks, is_open):
+    return not is_open
 # Callback para abrir/cerrar modal
+"""
 @app.callback(
     Output("modal", "is_open"),
-    Input('algorithm_dropdown', 'value'),
-    [State("modal", "is_open")]
+    [
+        Input("abrir-modal", "n_clicks"),
+        Input("guardar-numero", "n_clicks"),
+    ],
+    State("modal", "is_open"),
+    prevent_initial_call=True
 )
-def toggle_modal(algorithm,is_open):
-    if algorithm =='DBscan':
-        return  True
-    else:
-        return False
+def toggle_modal(open_click, guardar_click,  is_open):
+    triggered = dash.ctx.triggered_id
+
+    if triggered in ["abrir-modal", "guardar-numero"]:
+        return not is_open
+    return is_open
+"""
 # Callback para mostrar el número introducido
 @app.callback(
     Output('store-dbscan-parametros', 'data'),
@@ -129,9 +171,14 @@ def print_dots(dataset_value,algorithm,dbscan_params):
                             hover_data=["group","grupo_manual"])
     elif algorithm == 'DBscan':
         dbscan = DBSCAN(eps=eps, min_samples=n_min)
-        df["grupo_DBscan"] = dbscan.fit_predict(coords)
-        figure = px.scatter(df, x="x", y="y", color="grupo_DBscan",
-                            hover_data=["group", "grupo_manual", "grupo_DBscan"])
+        df["grupo_clust"] = dbscan.fit_predict(coords)
+        figure = px.scatter(df, x="x", y="y", color="grupo_clust",
+                            hover_data=["group", "grupo_manual", "grupo_clust"])
+    elif algorithm ==('HDBscan'):
+        hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=10)
+        df["grupo_clust"] = hdbscan_a.fit_predict(df)
+        figure = px.scatter(df, x="x", y="y", color="grupo_clust",
+                            hover_data=["group", "grupo_manual", "grupo_clust"])
     return figure
 """
 @app.callback(
