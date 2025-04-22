@@ -5,14 +5,18 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import pandas as pd
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, MATCH,ALL
 import dash_bootstrap_components as dbc
 
 """
 Añadir botones para ir eligiendo que algoritmo se representa y diferentes datos.
 """
 
-
+parametros_por_algoritmo = {
+    "DBscan": ["eps", "n_min"],
+    "HDBscan": ["n_min"],
+    "otro_algo": ["rango", "umbral"]
+}
 datos_formas = pd.read_csv("datos.txt")
 datos = datos_formas.copy()
 data_compound=pd.read_csv("compound.txt")
@@ -55,23 +59,27 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                             value='none'  # valor inicial, será actualizado dinámicamente
                         ),
                         dcc.Store(id='store-dbscan-parametros'),
-                        dbc.Button("Configurar DBSCAN", id="btn-popover", n_clicks=0),
+                        dbc.Button("Abrir/cerrar parámetros algoritmos", id="btn-popover", n_clicks=0),
                         dbc.Popover(
                                 [
-                                    dbc.PopoverHeader("Parámetros DBSCAN"),
+                                    dbc.PopoverHeader("Parámetros algoritmos"),
                                     dbc.PopoverBody([
-                                        dcc.Input(id='input-eps', type='number', placeholder='Epsilon', style={'width': '100%', 'marginBottom': '10px'}),
-                                        dcc.Input(id='input-min', type='number', placeholder='Min samples', style={'width': '100%'}),
-                                        html.Br(),
-                                        html.Br(),
-                                        dbc.Button("Guardar", id="guardar-numero", size="sm", color="primary")
+                                        dbc.PopoverBody(id="popover-body"),  # ← Este es dinámico
+
                                     ])
                                 ],
                                 id="popover-dbscan",
                                 target="btn-popover",  # Ancla el popover al botón
                                # trigger="click",       # Se abre al hacer clic
                                 placement="bottom",    # Aparece debajo del botón
-                                is_open=False          # Estado inicial cerrado
+                                is_open=False,          # Estado inicial cerrado
+                                style={
+                                        "backgroundColor": "white",
+                                        "padding": "15px",
+                                        "borderRadius": "10px",
+                                        "boxShadow": "0px 4px 8px rgba(0, 0, 0, 0.2)",
+                                        "zIndex": 2000  # Asegura que se superponga a lo de detrás
+                                    }
                             ),
 
 
@@ -111,40 +119,88 @@ dbc.Button("Seleccion parametros", id="abrir-modal", n_clicks=0),
 )
 def toggle_popover(n_clicks, is_open):
     return not is_open
-# Callback para abrir/cerrar modal
-"""
-@app.callback(
-    Output("modal", "is_open"),
-    [
-        Input("abrir-modal", "n_clicks"),
-        Input("guardar-numero", "n_clicks"),
-    ],
-    State("modal", "is_open"),
-    prevent_initial_call=True
-)
-def toggle_modal(open_click, guardar_click,  is_open):
-    triggered = dash.ctx.triggered_id
 
-    if triggered in ["abrir-modal", "guardar-numero"]:
-        return not is_open
-    return is_open
+@app.callback(
+    Output("popover-body", "children"),
+    Input("algorithm_dropdown", "value")
+)
+def actualizar_contenido_popover(algoritmo):
+    if algoritmo not in parametros_por_algoritmo:
+        return html.Div("Este algoritmo no tiene configuración")
+
+    inputs = []
+    for param in parametros_por_algoritmo[algoritmo]:
+        inputs.append(
+            dcc.Input(
+                id={"type": "param-clustering", "param": param},
+                type="number",
+                placeholder=param,
+                style={"width": "100%", "marginBottom": "10px"}
+            )
+        )
+
+    inputs.append(
+        dbc.Button("Guardar", id="guardar-config", size="sm", color="primary")
+    )
+
+    return html.Div(inputs)
+    """
+    if algoritmo == "DBscan":
+        return html.Div([
+            dcc.Input(id="input-eps", type="number", placeholder="Epsilon", style={"width": "100%"}),
+            #html.Br(),
+            dcc.Input(id="input-min", type="number", placeholder="Min samples", style={"width": "100%"}),
+            html.Br(),
+            html.Br(),
+
+        ])
+    elif algoritmo == "HDBscan":
+        return html.Div([
+            dcc.Input(id="input-min", type="number", placeholder="Min samples", style={"width": "100%"}),
+            html.Br(),
+        ])
+    elif algoritmo == "otro":
+        return html.Div([
+            dcc.Input(id="input-param1", type="number", placeholder="Parámetro X", style={"width": "100%"}),
+            html.Br(),
+        ])
+    else:
+        return "Selecciona un algoritmo para configurar."
+        
 """
 # Callback para mostrar el número introducido
 @app.callback(
     Output('store-dbscan-parametros', 'data'),
-    Input("guardar-numero", "n_clicks"),
-    State("input-min", "value"),
-    State("input-eps", "value"),
+    Input("guardar-config", "n_clicks"),
+    State({"type": "param-clustering", "param": ALL}, "id"),
+    State({"type": "param-clustering", "param": ALL}, "value"),
 
     prevent_initial_call=True
 )
-def guardar_numero(n_clicks, n_min,eps):
+def display_popover(n_clicks, ids,valores):
+    parametros = {}
+
+    for id_obj, valor in zip(ids, valores):
+        if valor is not None:
+            parametros[id_obj["param"]] = valor
+
+    return parametros
+
+    """
+    def display_popover(n_clicks, n_min,eps):
     print(eps)
-    if eps is None or n_min is None:
+
+    if eps is None and n_min is None:
         return dash.no_update  # Evita guardar si algún campo está vacío
-    else:
-        print("guardado")
+    elif eps is None:
+        eps=-1
+    elif n_min is None:
+        n_min=-1
+
+    print("guardado")
+
     return {'eps': eps, 'n_min': n_min}
+    """
 
 @app.callback(
     Output('scatter-plot','figure'),
@@ -175,7 +231,7 @@ def print_dots(dataset_value,algorithm,dbscan_params):
         figure = px.scatter(df, x="x", y="y", color="grupo_clust",
                             hover_data=["group", "grupo_manual", "grupo_clust"])
     elif algorithm ==('HDBscan'):
-        hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=10)
+        hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
         df["grupo_clust"] = hdbscan_a.fit_predict(df)
         figure = px.scatter(df, x="x", y="y", color="grupo_clust",
                             hover_data=["group", "grupo_manual", "grupo_clust"])
