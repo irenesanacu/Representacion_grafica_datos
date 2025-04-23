@@ -28,7 +28,7 @@ datasets={
     'Compound':data_compound
 
 }
-app = dash.Dash(__name__)
+app = dash.Dash(__name__,suppress_callback_exceptions=True)
 
 # Si no existe la columna "grupo_manual", créala
 if "grupo_DBscan" not in datos.columns:
@@ -261,7 +261,7 @@ def Data_selection(valor_seleccionado):
     """
 
 @app.callback(
-    Output("selected-data", "figure"),
+    #Output("selected-data", "figure"),
 
     Input("scatter-plot", "selectedData")
 )
