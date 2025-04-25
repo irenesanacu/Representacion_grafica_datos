@@ -86,7 +86,16 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
 
                        html.Hr(),
                        html.H3("Datos de los puntos seleccionados"),
-                       dcc.Graph(id="scatter-plot"),
+                       #dcc.Graph(id="scatter-plot"),
+                        html.Div([
+                            html.Div([
+                                dcc.Graph(id='scatter-plot-solution')
+                            ], style={"width": "50%", "display": "inline-block"}),
+
+                            html.Div([
+                                dcc.Graph(id='scatter-plot-algorithm')
+                            ], style={"width": "50%", "display": "inline-block"})
+                        ], style={"display": "flex"}),
                        html.H3("Asignar nuevo grupo a los puntos seleccionados"),
                        dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
                        html.Button("Asignar grupo", id="asignar-grupo-btn"),
@@ -95,20 +104,6 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                        html.Div(id="porcentaje")
                        ])
 
-"""
-dbc.Button("Seleccion parametros", id="abrir-modal", n_clicks=0),
-                        dbc.Modal([
-                                dbc.ModalHeader("Introduce el valor de epsilon y el minimo de puntos"),
-                                dbc.ModalBody([
-                                    dcc.Input(id='input-eps', type='number', placeholder='Escribe epsilon',
-                                              style={"width": "100%"}),
-                                    dcc.Input(id='input-min', type='number', placeholder='Escribe el numero min', style={"width": "100%"}),
-                                ]),
-                                dbc.ModalFooter([
-                                    html.Button("Aceptar", id="guardar-numero", n_clicks=0, className="btn btn-primary")
-                                ]),
-                            ], id="modal", is_open=False),
-"""
 #Callback para abrir/cerrar popover
 
 @app.callback(
@@ -144,30 +139,7 @@ def actualizar_contenido_popover(algoritmo):
     )
 
     return html.Div(inputs)
-    """
-    if algoritmo == "DBscan":
-        return html.Div([
-            dcc.Input(id="input-eps", type="number", placeholder="Epsilon", style={"width": "100%"}),
-            #html.Br(),
-            dcc.Input(id="input-min", type="number", placeholder="Min samples", style={"width": "100%"}),
-            html.Br(),
-            html.Br(),
 
-        ])
-    elif algoritmo == "HDBscan":
-        return html.Div([
-            dcc.Input(id="input-min", type="number", placeholder="Min samples", style={"width": "100%"}),
-            html.Br(),
-        ])
-    elif algoritmo == "otro":
-        return html.Div([
-            dcc.Input(id="input-param1", type="number", placeholder="Parámetro X", style={"width": "100%"}),
-            html.Br(),
-        ])
-    else:
-        return "Selecciona un algoritmo para configurar."
-        
-"""
 # Callback para mostrar el número introducido
 @app.callback(
     Output('store-dbscan-parametros', 'data'),
@@ -186,24 +158,9 @@ def display_popover(n_clicks, ids,valores):
 
     return parametros
 
-    """
-    def display_popover(n_clicks, n_min,eps):
-    print(eps)
-
-    if eps is None and n_min is None:
-        return dash.no_update  # Evita guardar si algún campo está vacío
-    elif eps is None:
-        eps=-1
-    elif n_min is None:
-        n_min=-1
-
-    print("guardado")
-
-    return {'eps': eps, 'n_min': n_min}
-    """
-
 @app.callback(
-    Output('scatter-plot','figure'),
+    Output('scatter-plot-algorithm','figure'),
+    Output('scatter-plot-solution','figure'),
     Input('data_dropdown', 'value'),
     Input('algorithm_dropdown', 'value'),
     Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
@@ -219,46 +176,26 @@ def print_dots(dataset_value,algorithm,dbscan_params):
     print("eps: ",eps)
     print("n_min: ",n_min)
     coords=df[['x','y']]
+
     if "grupo_manual" not in df.columns:
         df["grupo_manual"] = df["group"]
+    figure_solution = px.scatter(df, x="x", y="y", color="group",
+                                hover_data=["group", "grupo_manual"])
     if algorithm == 'none':
 
-        figure = px.scatter(df, x="x", y="y", color="group",
+        figure_algorithm = px.scatter(df, x="x", y="y", color="group",
                             hover_data=["group","grupo_manual"])
     elif algorithm == 'DBscan':
         dbscan = DBSCAN(eps=eps, min_samples=n_min)
         df["grupo_clust"] = dbscan.fit_predict(coords)
-        figure = px.scatter(df, x="x", y="y", color="grupo_clust",
+        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                             hover_data=["group", "grupo_manual", "grupo_clust"])
     elif algorithm ==('HDBscan'):
         hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
         df["grupo_clust"] = hdbscan_a.fit_predict(df)
-        figure = px.scatter(df, x="x", y="y", color="grupo_clust",
+        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                             hover_data=["group", "grupo_manual", "grupo_clust"])
-    return figure
-"""
-@app.callback(
-    Output('grafico', 'figure'),
-    Input('data_dropdown', 'value'),
-    Input('algorithm_dropdown', 'value')
-)
-def actualizar_grafico(dataset_seleccionado, columna_y):
-    df = datasets[dataset_seleccionado]
-    print('1')
-    fig = px.scatter(df, x='x', y=columna_y, title=f'{columna_y} vs x en {dataset_seleccionado}')
-    return fig
-    """
-"""
-@app.callback(
-    Output('dataset_selected', 'children'),
-    Output('scatter-plot','figure'),
-    Input('data_dropdown', 'value'),
-    Input('algorithm_dropdown', 'value')
-)
-def Data_selection(valor_seleccionado):
-    datos = datasets[valor_seleccionado]
-    return f"Seleccionaste: {valor_seleccionado}, con datos: {datos}"
-    """
+    return figure_algorithm,figure_solution
 
 @app.callback(
     #Output("selected-data", "figure"),
@@ -313,44 +250,6 @@ def update_graph(selectedData,dataset_value):
     # Crear el gráfico de barras
     return px.bar(group_merge, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
 
-"""
-@app.callback(
-    Output("confirmacion-asignacion", "children"),
-    Output("scatter-plot", "figure"),
-    Input("asignar-grupo-btn", "n_clicks"),
-    State("nuevo-grupo", "value"),
-    State("scatter-plot", "selectedData"),
-    prevent_initial_call=True
-)
-def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
-    print('assing group')
-    print(selectedData)
-    print('----------------------')
-    if not nuevo_grupo:
-        return "Por favor, ingresa un nuevo grupo.", dash.no_update
-
-    if selectedData and "points" in selectedData:
-        # Extraer los índices de los puntos seleccionados
-        selected_indices = [point["pointIndex"] for point in selectedData["points"]]
-
-        print('selected_indices')
-        print(selected_indices)
-        # Asignar el nuevo grupo a los puntos seleccionados
-        datos.loc[selected_indices, "grupo_manual"] = nuevo_grupo
-        print('datos')
-        print(datos)
-
-        # Actualizar el gráfico de dispersión con los nuevos grupos
-        fig = px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])
-        print('-------------')
-        print(datos)
-        return f"Grupo '{nuevo_grupo}' asignado correctamente.", fig
-    else:
-        return "No hay puntos seleccionados.", dash.no_update
-
-    # Ejecutar la app
-
-"""
 @app.callback(
     Output("porcentaje", "children"),
     Input("calcular_porcentaje", "n_clicks"),
