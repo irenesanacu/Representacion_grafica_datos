@@ -1,8 +1,12 @@
 import numpy as np
 import hdbscan
 from sklearn.cluster import DBSCAN
+from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import pairwise_distances
+from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 import plotly.express as px
+import plotly.graph_objs as pgo
 import pandas as pd
 import dash
 from dash import dcc, html, Input, Output, State, MATCH,ALL
@@ -15,13 +19,15 @@ Añadir botones para ir eligiendo que algoritmo se representa y diferentes datos
 parametros_por_algoritmo = {
     "DBscan": ["eps", "n_min"],
     "HDBscan": ["n_min"],
+    "Density peak":["d_percent","n_clusters"],
+    "Quickshift":["sigma","n_min"],
     "otro_algo": ["rango", "umbral"]
 }
 datos_formas = pd.read_csv("datos.txt")
 datos = datos_formas.copy()
 data_compound=pd.read_csv("compound.txt")
 pathbased=pd.read_csv("pathbased_1")
-clust_algorithms=['none','DBscan','HDBscan']
+clust_algorithms=['none','DBscan','HDBscan','Density peak','Quickshift']
 datasets={
     'Pathbased':pathbased,
     'Formas': datos,
@@ -59,6 +65,7 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                             value='none'  # valor inicial, será actualizado dinámicamente
                         ),
                         dcc.Store(id='store-dbscan-parametros'),
+                        dcc.Store(id='clustered_data'),
                         dbc.Button("Abrir/cerrar parámetros algoritmos", id="btn-popover", n_clicks=0),
                         dbc.Popover(
                                 [
@@ -96,7 +103,8 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                                 dcc.Graph(id='scatter-plot-algorithm')
                             ], style={"width": "50%", "display": "inline-block"})
                         ], style={"display": "flex"}),
-                       html.H3("Asignar nuevo grupo a los puntos seleccionados"),
+                       dcc.Graph(id="matriz"),
+                       html.H3("Asignar nuevo grupo a los puntos seleccionados"), #arreglar
                        dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
                        html.Button("Asignar grupo", id="asignar-grupo-btn"),
                        html.Div(id="confirmacion-asignacion"),
@@ -120,6 +128,8 @@ def toggle_popover(n_clicks, is_open):
     Input("algorithm_dropdown", "value")
 )
 def actualizar_contenido_popover(algoritmo):
+    print (algoritmo)
+    print(parametros_por_algoritmo)
     if algoritmo not in parametros_por_algoritmo:
         return html.Div("Este algoritmo no tiene configuración")
 
@@ -161,6 +171,7 @@ def display_popover(n_clicks, ids,valores):
 @app.callback(
     Output('scatter-plot-algorithm','figure'),
     Output('scatter-plot-solution','figure'),
+    Output('clustered_data','data'),
     Input('data_dropdown', 'value'),
     Input('algorithm_dropdown', 'value'),
     Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
@@ -168,13 +179,14 @@ def display_popover(n_clicks, ids,valores):
 )
 def print_dots(dataset_value,algorithm,dbscan_params):
     df=datasets[dataset_value]
-    print(dbscan_params)
     if dbscan_params:
         print("Recibe parametros")
     eps = dbscan_params.get('eps', 1.1) if dbscan_params else 1.1
     n_min = dbscan_params.get('n_min', 5) if dbscan_params else 5
-    print("eps: ",eps)
-    print("n_min: ",n_min)
+    d_percent=dbscan_params.get('d_percent',1)if dbscan_params else 1
+    n_clusters=dbscan_params.get('n_clusters',1)if dbscan_params else 1
+    influencia = dbscan_params.get('sigma', 1) if dbscan_params else 1
+
     coords=df[['x','y']]
 
     if "grupo_manual" not in df.columns:
@@ -190,12 +202,103 @@ def print_dots(dataset_value,algorithm,dbscan_params):
         df["grupo_clust"] = dbscan.fit_predict(coords)
         figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                             hover_data=["group", "grupo_manual", "grupo_clust"])
-    elif algorithm ==('HDBscan'):
+    elif algorithm =='HDBscan':
+        df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
         hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
         df["grupo_clust"] = hdbscan_a.fit_predict(df)
         figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                             hover_data=["group", "grupo_manual", "grupo_clust"])
-    return figure_algorithm,figure_solution
+    elif algorithm =='Density peak':
+        df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
+
+        X = df[['x', 'y']].values
+        distances = pairwise_distances(X)
+        dc = np.percentile(distances, d_percent)
+        rho = np.sum(distances < dc, axis=1) - 1
+        delta = np.zeros_like(rho, dtype=float)
+        nearest_higher = np.zeros_like(rho, dtype=int)
+
+        for i in range(len(X)):
+            higher = np.where(rho > rho[i])[0]
+            if len(higher) > 0:
+                j = higher[np.argmin(distances[i, higher])]
+                delta[i] = distances[i, j]
+                nearest_higher[i] = j
+            else:
+                delta[i] = np.max(distances[i])
+                nearest_higher[i] = i
+            # Paso 3: Calcular gamma
+        gamma = rho * delta
+        centers = np.argsort(gamma)[-n_clusters:]
+
+        # Paso 4: Asignar clústeres
+        labels = -np.ones(len(X), dtype=int)
+        for idx, c in enumerate(centers):
+            labels[c] = idx
+
+        order = np.argsort(-rho)
+        for i in order:
+            if labels[i] == -1:
+                labels[i] = labels[nearest_higher[i]]
+        df["grupo_clust"]=labels
+        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
+                            hover_data=["group", "grupo_manual", "grupo_clust"])
+
+    elif algorithm == 'Quickshift':
+        df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
+
+        X = df[['x', 'y']].values
+        n = len(X)
+
+        # Estimación de densidad por kernel Gaussiano
+        nbrs = NearestNeighbors(radius=3 * influencia).fit(X)
+        radius_neighbors = nbrs.radius_neighbors(X, return_distance=True)
+
+        densities = np.zeros(n)
+        for i in range(n):
+            distances_i = radius_neighbors[0][i]
+            densities[i] = np.sum(np.exp(- (distances_i ** 2) / (2 * influencia ** 2)))
+
+        # Conexión a vecino más cercano con mayor densidad
+        parents = np.full(n, -1)
+        for i in range(n):
+            neighbors = radius_neighbors[1][i]
+            valid = [j for j in neighbors if densities[j] > densities[i]]
+            if valid:
+                j_min = valid[np.argmin(np.linalg.norm(X[valid] - X[i], axis=1))]
+                parents[i] = j_min
+            else:
+                parents[i] = i  # raíz
+
+        # Asignar etiquetas de clúster a cada raíz distinta
+        cluster_map = {}
+        labels = np.full(n, -1)
+        cluster_id = 0
+
+        for i in range(n):
+            # Seguir el árbol hasta la raíz
+            path = []
+            node = i
+            while parents[node] != node:
+                path.append(node)
+                node = parents[node]
+            root = node
+
+            # Crear nuevo clúster si no existe
+            if root not in cluster_map:
+                cluster_members = [j for j in range(n) if parents[j] == root or j == root]
+                if len(cluster_members) >= n_min:
+                    cluster_map[root] = cluster_id
+                    cluster_id += 1
+                else:
+                    cluster_map[root] = -1  # ruido
+
+            labels[i] = cluster_map[root]
+        df["grupo_clust"] = labels
+        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
+                                      hover_data=["group", "grupo_manual", "grupo_clust"])
+
+    return figure_algorithm,figure_solution,df.to_dict("records")
 
 @app.callback(
     #Output("selected-data", "figure"),
@@ -250,6 +353,108 @@ def update_graph(selectedData,dataset_value):
     # Crear el gráfico de barras
     return px.bar(group_merge, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
 
+@app.callback(
+    Output('matriz','figure'),
+    Input('data_dropdown', 'value'),
+    Input('clustered_data', 'data'),
+
+    Input('algorithm_dropdown', 'value'),
+    Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
+
+)
+def print_matrix(data_drop_down,df,algorithm_drop_down,params):
+    data_=pd.DataFrame(df)
+    if data_ is None:
+        data_=datasets[data_drop_down].copy()
+
+    if "grupo_clust" not in data_:
+        data_['grupo_clust']=0
+    data_['correct_dot']=data_['group']==data_['grupo_clust']
+    # 1. Crear matriz de confusión (clustering vs real)
+
+    matrix=pd.crosstab(data_['group'],data_['grupo_clust'])
+
+    # 2. Convertir a numpy para usar el algoritmo húngaro
+    matriz_numpy = matrix.to_numpy()
+
+    # 3. Aplicar algoritmo (¡invertimos el signo para maximizar aciertos!)
+    fila_ind, col_ind = linear_sum_assignment(-matriz_numpy)
+
+    # 4. Crear el mapeo: grupo del clustering → grupo real
+    grupos_cluster = matrix.index.to_numpy()
+    grupos_reales = matrix.columns.to_numpy()
+
+    mapeo = {
+       grupos_cluster[fila]: grupos_reales[col]
+       # grupos_reales[col]: grupos_cluster[fila]
+
+        for fila, col in zip(fila_ind, col_ind)
+    }
+
+
+    # 5. Reasignar los grupos del clustering
+    df = data_.copy()
+    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo)
+
+    df['grupo_clust_reasignado'] = df['grupo_clust_reasignado'].fillna(df['group'])
+
+    matriz_final=pd.crosstab(df['group'],df['grupo_clust_reasignado']).reindex(index=grupos_cluster, fill_value=0)
+    fig = pgo.Figure(data=pgo.Heatmap(
+        z=matriz_final.values,
+        x=matriz_final.columns[::-1],
+        y=matriz_final.index,
+        colorscale="Blues",
+        text=matriz_final.values,
+        texttemplate="%{text}",
+        colorbar=dict(title="Número de puntos")
+    ))
+    fig.update_layout(
+        title="Matriz de comparación manual vs clustering",
+        xaxis_title="Grupo algoritmo",
+        yaxis_title="Grupo real",
+        height=500
+    )
+    #fig.update_layout(xaxis_autorange='reversed')
+    return fig
+
+"""
+@app.callback(
+    Output("confirmacion-asignacion", "children"),
+    Output("scatter-plot", "figure"),
+    Input("asignar-grupo-btn", "n_clicks"),
+    State("nuevo-grupo", "value"),
+    State("scatter-plot", "selectedData"),
+    prevent_initial_call=True
+)
+def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
+    print('assing group')
+    print(selectedData)
+    print('----------------------')
+    if not nuevo_grupo:
+        return "Por favor, ingresa un nuevo grupo.", dash.no_update
+
+    if selectedData and "points" in selectedData:
+        # Extraer los índices de los puntos seleccionados
+        selected_indices = [point["pointIndex"] for point in selectedData["points"]]
+
+        print('selected_indices')
+        print(selected_indices)
+        # Asignar el nuevo grupo a los puntos seleccionados
+        datos.loc[selected_indices, "grupo_manual"] = nuevo_grupo
+        print('datos')
+        print(datos)
+
+        # Actualizar el gráfico de dispersión con los nuevos grupos
+        fig = px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])
+        print('-------------')
+        print(datos)
+        return f"Grupo '{nuevo_grupo}' asignado correctamente.", fig
+    else:
+        return "No hay puntos seleccionados.", dash.no_update
+
+    # Ejecutar la app
+
+"""
 @app.callback(
     Output("porcentaje", "children"),
     Input("calcular_porcentaje", "n_clicks"),
