@@ -9,12 +9,21 @@ import plotly.express as px
 import plotly.graph_objs as pgo
 import pandas as pd
 import dash
+import json
 from dash import dcc, html, Input, Output, State, MATCH,ALL
 import dash_bootstrap_components as dbc
+import os
 
-"""
-Añadir botones para ir eligiendo que algoritmo se representa y diferentes datos.
-"""
+CSV_LOG_PATH = "resultados_algoritmos.csv"
+
+if not os.path.exists(CSV_LOG_PATH):
+    import csv
+    with open(CSV_LOG_PATH, mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=["Dataset", "Algoritmo", "Parámetros", "Aciertos (%)"])
+        writer.writeheader()
+
+
+
 
 parametros_por_algoritmo = {
     "DBscan": ["eps", "n_min"],
@@ -108,6 +117,8 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                        dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
                        html.Button("Asignar grupo", id="asignar-grupo-btn"),
                        html.Div(id="confirmacion-asignacion"),
+                       html.Button("Guardar resultado", id="btn-guardar", n_clicks=0, className="btn btn-success"),
+                       html.Div(id="tabla-resultados"),
                        html.Button("Calcular porcentaje", id="calcular_porcentaje"),
                        html.Div(id="porcentaje")
                        ])
@@ -300,7 +311,6 @@ def print_dots(dataset_value,algorithm,dbscan_params):
         df['grupo_clust']=0
     if 'group' not in df.columns and 'grupo_manual' in df.columns:
         df['group'] = df['grupo_manual']
-    df['correct_dot']=df['group']==df['grupo_clust']
     # 1. Crear matriz de confusión (clustering vs real)
     real_labels = df['group'].unique()
     clust_labels = df['grupo_clust'].unique()
@@ -341,6 +351,8 @@ def print_dots(dataset_value,algorithm,dbscan_params):
 
     # Aplicar el mapeo final directamente al grupo_clust
     df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo_final)
+    df['correct_dot']=df['group']==df['grupo_clust_reasignado']
+
 
     figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                                   hover_data=["group", "grupo_clust_reasignado", "grupo_clust"])
@@ -527,5 +539,84 @@ def percentage(click):
     porcent=aciertos/len(datos)*100
 
     return "El porcentaje de acierto es: ",porcent,"%"
+default_params = {
+        "DBscan": {"eps": 1.1, "n_min": 5},
+        "HDBscan": {"n_min": 5},
+        "Density peak": {"d_percent": 1, "n_clusters": 1},
+        "Quickshift": {"sigma": 1.0, "n_min": 5}
+    }
+@app.callback(
+    Output("tabla-resultados", "children"),
+    Input("btn-guardar", "n_clicks"),
+    State("data_dropdown", "value"),
+    State("algorithm_dropdown", "value"),
+    State("store-dbscan-parametros", "data"),
+    State("clustered_data", "data"),
+    prevent_initial_call=True
+)
+def guardar_y_mostrar(n_clicks, dataset, algoritmo, parametros, datos_clusterizados):
+    if datos_clusterizados is None:
+        return "❌ No hay datos para guardar"
+
+    if not parametros:
+        parametros = default_params.get(algoritmo, {})
+
+    df = pd.DataFrame(datos_clusterizados)
+
+    # Calcular porcentaje de aciertos
+    if "correct_dot" in df.columns:
+        porcentaje = round(100 * df["correct_dot"].mean(), 2)
+    else:
+        porcentaje = "N/A"
+
+    fila = {
+        "Dataset": dataset,
+        "Algoritmo": algoritmo,
+        "Parámetros": json.dumps(parametros) if parametros else "{}",
+        "Aciertos (%)": porcentaje
+    }
+
+    # Añadir al CSV
+    df_log = pd.read_csv(CSV_LOG_PATH)
+    df_log = pd.concat([df_log, pd.DataFrame([fila])], ignore_index=True)
+    df_log.to_csv(CSV_LOG_PATH, index=False)
+    # Ordenar por Dataset y Algoritmo
+    df_log["Aciertos (%)"] = pd.to_numeric(df_log["Aciertos (%)"], errors="coerce")
+    df_log.sort_values(by=["Dataset", "Algoritmo", "Aciertos (%)"], ascending=[True, True, False], inplace=True)
+
+    # Marcar las filas con mayor acierto por grupo
+    df_log["Destacado"] = False
+    idx_max = df_log.groupby(["Dataset", "Algoritmo"])["Aciertos (%)"].idxmax()
+    df_log.loc[idx_max, "Destacado"] = True
+
+    # Crear tabla HTML resaltando fila con mayor acierto
+    header = [
+        html.Thead(html.Tr([html.Th(col) for col in df_log.columns if col != "Destacado"]))
+    ]
+
+    rows = []
+    for _, row in df_log.iterrows():
+        estilo = {"backgroundColor": "#d4edda"} if row["Destacado"] else {}
+        cells = [html.Td(str(row[col])) for col in df_log.columns if col != "Destacado"]
+        rows.append(html.Tr(cells, style=estilo))
+
+    tabla = dbc.Table(
+        header + [html.Tbody(rows)],
+        bordered=True,
+        striped=True,
+        hover=True,
+        style={
+            "marginTop": "20px",
+            "fontFamily": "monospace",
+            "fontSize": "16px",
+            "letterSpacing": "0.05em",
+            "width": "100%",
+            "tableLayout": "fixed",
+        },
+        responsive=True
+    )
+
+    return tabla
+
 if __name__ == "__main__":
     app.run(debug=True)
