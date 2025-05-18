@@ -23,7 +23,7 @@ parametros_por_algoritmo = {
     "Quickshift":["sigma","n_min"],
     "otro_algo": ["rango", "umbral"]
 }
-datos_formas = pd.read_csv("datos.txt")
+datos_formas = pd.read_csv("datos2.txt")
 datos = datos_formas.copy()
 data_compound=pd.read_csv("compound.txt")
 pathbased=pd.read_csv("pathbased_1")
@@ -200,14 +200,12 @@ def print_dots(dataset_value,algorithm,dbscan_params):
     elif algorithm == 'DBscan':
         dbscan = DBSCAN(eps=eps, min_samples=n_min)
         df["grupo_clust"] = dbscan.fit_predict(coords)
-        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
-                            hover_data=["group", "grupo_manual", "grupo_clust"])
+        #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
     elif algorithm =='HDBscan':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
         hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
         df["grupo_clust"] = hdbscan_a.fit_predict(df)
-        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
-                            hover_data=["group", "grupo_manual", "grupo_clust"])
+        #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
     elif algorithm =='Density peak':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
 
@@ -241,8 +239,7 @@ def print_dots(dataset_value,algorithm,dbscan_params):
             if labels[i] == -1:
                 labels[i] = labels[nearest_higher[i]]
         df["grupo_clust"]=labels
-        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
-                            hover_data=["group", "grupo_manual", "grupo_clust"])
+        #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
 
     elif algorithm == 'Quickshift':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
@@ -295,10 +292,177 @@ def print_dots(dataset_value,algorithm,dbscan_params):
 
             labels[i] = cluster_map[root]
         df["grupo_clust"] = labels
-        figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
-                                      hover_data=["group", "grupo_manual", "grupo_clust"])
+    if "grupo_clust" not in df:
+        df['grupo_clust']=df['group']
+   # df['grupo_clust']=df['grupo_clust']+2
 
+    if "grupo_clust" not in df:
+        df['grupo_clust']=0
+    if 'group' not in df.columns and 'grupo_manual' in df.columns:
+        df['group'] = df['grupo_manual']
+    df['correct_dot']=df['group']==df['grupo_clust']
+    # 1. Crear matriz de confusión (clustering vs real)
+    real_labels = df['group'].unique()
+    clust_labels = df['grupo_clust'].unique()
+
+    n_real = len(real_labels)
+    n_clust = len(clust_labels)
+    if n_real < n_clust:
+        n_to_add = n_clust - n_real
+        print(f"Añadiendo {n_to_add} grupos ficticios a 'group'")
+
+        max_real = df['group'].max()
+        for i in range(n_to_add):
+            nuevo_grupo = max_real + i + 1
+            fila_ficticia = df.iloc[0].copy()
+            fila_ficticia['group'] = nuevo_grupo
+            df = pd.concat([df, pd.DataFrame([fila_ficticia])], ignore_index=True)
+
+    matrix = pd.crosstab(df['grupo_clust'], df['group'])
+    # 2. Convertir a numpy para usar el algoritmo húngaro
+    matriz_numpy = matrix.to_numpy()
+
+    # 3. Aplicar algoritmo (¡invertimos el signo para maximizar aciertos!)
+    fila_ind, col_ind = linear_sum_assignment(-matriz_numpy)
+
+    # 4. Crear el mapeo: grupo del clustering → grupo real
+    grupos_cluster = matrix.index.to_numpy()
+    grupos_reales = matrix.columns.to_numpy()
+
+    mapeo = {grupos_cluster[fila]: grupos_reales[col] for fila, col in zip(fila_ind, col_ind)}
+
+    # 5. Reasignar los grupos del clustering
+    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo)
+    grupos_originales = sorted(df['grupo_clust_reasignado'].dropna().unique())
+
+    # Crear un nuevo mapeo secuencial: {original → nuevo}
+    orden_cluster = [k for k, _ in sorted(mapeo.items(), key=lambda item: item[1])]
+    mapeo_final = {cluster_id: i + 1 for i, cluster_id in enumerate(orden_cluster)}
+
+    # Aplicar el mapeo final directamente al grupo_clust
+    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo_final)
+
+    figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
+                                  hover_data=["group", "grupo_clust_reasignado", "grupo_clust"])
     return figure_algorithm,figure_solution,df.to_dict("records")
+
+@app.callback(
+    Output('matriz','figure'),
+    Input('data_dropdown', 'value'),
+    Input('clustered_data', 'data'),
+
+    Input('algorithm_dropdown', 'value'),
+    Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
+
+)
+def print_matrix(data_drop_down,data_,algorithm_drop_down,params):
+
+    df=pd.DataFrame(data_)
+    if df is None:
+        df=datasets[data_drop_down].copy()
+        process=algorithm_drop_down
+        param=params
+
+
+
+    #df['grupo_clust_reasignado'] = df['grupo_clust_reasignado'].fillna(df['group'])
+
+    grupos_reasignados= sorted(df['grupo_clust_reasignado'].unique())
+    grupos_clust=sorted(df['grupo_clust'].unique())
+    grupos_reales=sorted(df['group'].unique())
+
+    print("grupos_reasignados")
+    print(grupos_reasignados)
+    for g in range(1, 8):  # de 1 a 7 inclusive
+        count = (df['grupo_clust_reasignado'] == g).sum()
+        print(f"Grupo reasignado {g}: {count} puntos")
+
+
+    n_grupos = df['group'].nunique()
+    n_grupos_reasignados = df['grupo_clust_reasignado'].nunique()
+
+    if n_grupos_reasignados > n_grupos:
+        size = grupos_reasignados
+    else:
+        size = grupos_reales
+
+
+    matriz_final=pd.crosstab(df['group'],df['grupo_clust_reasignado'])
+    #matriz_final = matriz_final.reindex(columns=todos_los_grupos_clust, fill_value=0)
+   # matriz_final = matriz_final.reindex(index=size, columns=size, fill_value=0)
+
+
+    todos_los_grupos = sorted(set(grupos_reales).union(set(grupos_reasignados)))
+    matriz_final = matriz_final.reindex(index=todos_los_grupos, columns=todos_los_grupos, fill_value=0)
+
+    print(matriz_final)
+    fig = pgo.Figure(data=pgo.Heatmap(
+        z=matriz_final.values,
+        x=matriz_final.columns,
+        y=matriz_final.index,
+        colorscale="Blues",
+        text=matriz_final.astype(str).values,
+        texttemplate="%{text}",
+        colorbar=dict(title="Número de puntos")
+    ))
+    fig.update_layout(
+        title="Matriz de comparación manual vs clustering",
+        xaxis_title="Grupo algoritmo",
+        yaxis_title="Grupo real",
+        height=500
+    )
+    fig.update_xaxes(
+        tickmode='array',
+        tickvals=list(matriz_final.columns),
+        ticktext=[str(int(v)) for v in matriz_final.columns]
+    )
+
+    fig.update_yaxes(
+        tickmode='array',
+        tickvals=list(matriz_final.index),
+        ticktext=[str(int(v)) for v in matriz_final.index]
+    )
+    #fig.update_layout(xaxis_autorange='reversed')
+    return fig
+
+"""
+@app.callback(
+    Output("confirmacion-asignacion", "children"),
+    Output("scatter-plot", "figure"),
+    Input("asignar-grupo-btn", "n_clicks"),
+    State("nuevo-grupo", "value"),
+    State("scatter-plot", "selectedData"),
+    prevent_initial_call=True
+)
+def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
+    print('assing group')
+    print(selectedData)
+    print('----------------------')
+    if not nuevo_grupo:
+        return "Por favor, ingresa un nuevo grupo.", dash.no_update
+
+    if selectedData and "points" in selectedData:
+        # Extraer los índices de los puntos seleccionados
+        selected_indices = [point["pointIndex"] for point in selectedData["points"]]
+
+        print('selected_indices')
+        print(selected_indices)
+        # Asignar el nuevo grupo a los puntos seleccionados
+        datos.loc[selected_indices, "grupo_manual"] = nuevo_grupo
+        print('datos')
+        print(datos)
+
+        # Actualizar el gráfico de dispersión con los nuevos grupos
+        fig = px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])
+        print('-------------')
+        print(datos)
+        return f"Grupo '{nuevo_grupo}' asignado correctamente.", fig
+    else:
+        return "No hay puntos seleccionados.", dash.no_update
+
+    # Ejecutar la app
+
+"""
 
 @app.callback(
     #Output("selected-data", "figure"),
@@ -349,112 +513,9 @@ def update_graph(selectedData,dataset_value):
     # group_merge = group_merge.sort_values(by="group")
 
     print("DataFrame final:")
-    print(group_merge)
     # Crear el gráfico de barras
     return px.bar(group_merge, x="group", y="count", text_auto=True, title="Número de puntos seleccionados")
 
-@app.callback(
-    Output('matriz','figure'),
-    Input('data_dropdown', 'value'),
-    Input('clustered_data', 'data'),
-
-    Input('algorithm_dropdown', 'value'),
-    Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
-
-)
-def print_matrix(data_drop_down,df,algorithm_drop_down,params):
-    data_=pd.DataFrame(df)
-    if data_ is None:
-        data_=datasets[data_drop_down].copy()
-
-    if "grupo_clust" not in data_:
-        data_['grupo_clust']=0
-    data_['correct_dot']=data_['group']==data_['grupo_clust']
-    # 1. Crear matriz de confusión (clustering vs real)
-
-    matrix=pd.crosstab(data_['group'],data_['grupo_clust'])
-
-    # 2. Convertir a numpy para usar el algoritmo húngaro
-    matriz_numpy = matrix.to_numpy()
-
-    # 3. Aplicar algoritmo (¡invertimos el signo para maximizar aciertos!)
-    fila_ind, col_ind = linear_sum_assignment(-matriz_numpy)
-
-    # 4. Crear el mapeo: grupo del clustering → grupo real
-    grupos_cluster = matrix.index.to_numpy()
-    grupos_reales = matrix.columns.to_numpy()
-
-    mapeo = {
-       grupos_cluster[fila]: grupos_reales[col]
-       # grupos_reales[col]: grupos_cluster[fila]
-
-        for fila, col in zip(fila_ind, col_ind)
-    }
-
-
-    # 5. Reasignar los grupos del clustering
-    df = data_.copy()
-    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo)
-
-    df['grupo_clust_reasignado'] = df['grupo_clust_reasignado'].fillna(df['group'])
-
-    matriz_final=pd.crosstab(df['group'],df['grupo_clust_reasignado']).reindex(index=grupos_cluster, fill_value=0)
-    fig = pgo.Figure(data=pgo.Heatmap(
-        z=matriz_final.values,
-        x=matriz_final.columns[::-1],
-        y=matriz_final.index,
-        colorscale="Blues",
-        text=matriz_final.values,
-        texttemplate="%{text}",
-        colorbar=dict(title="Número de puntos")
-    ))
-    fig.update_layout(
-        title="Matriz de comparación manual vs clustering",
-        xaxis_title="Grupo algoritmo",
-        yaxis_title="Grupo real",
-        height=500
-    )
-    #fig.update_layout(xaxis_autorange='reversed')
-    return fig
-
-"""
-@app.callback(
-    Output("confirmacion-asignacion", "children"),
-    Output("scatter-plot", "figure"),
-    Input("asignar-grupo-btn", "n_clicks"),
-    State("nuevo-grupo", "value"),
-    State("scatter-plot", "selectedData"),
-    prevent_initial_call=True
-)
-def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
-    print('assing group')
-    print(selectedData)
-    print('----------------------')
-    if not nuevo_grupo:
-        return "Por favor, ingresa un nuevo grupo.", dash.no_update
-
-    if selectedData and "points" in selectedData:
-        # Extraer los índices de los puntos seleccionados
-        selected_indices = [point["pointIndex"] for point in selectedData["points"]]
-
-        print('selected_indices')
-        print(selected_indices)
-        # Asignar el nuevo grupo a los puntos seleccionados
-        datos.loc[selected_indices, "grupo_manual"] = nuevo_grupo
-        print('datos')
-        print(datos)
-
-        # Actualizar el gráfico de dispersión con los nuevos grupos
-        fig = px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])
-        print('-------------')
-        print(datos)
-        return f"Grupo '{nuevo_grupo}' asignado correctamente.", fig
-    else:
-        return "No hay puntos seleccionados.", dash.no_update
-
-    # Ejecutar la app
-
-"""
 @app.callback(
     Output("porcentaje", "children"),
     Input("calcular_porcentaje", "n_clicks"),
@@ -468,4 +529,3 @@ def percentage(click):
     return "El porcentaje de acierto es: ",porcent,"%"
 if __name__ == "__main__":
     app.run(debug=True)
-
