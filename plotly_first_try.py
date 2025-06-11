@@ -1,4 +1,6 @@
 import numpy as np
+import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 import hdbscan
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
@@ -10,7 +12,7 @@ import plotly.graph_objs as pgo
 import pandas as pd
 import dash
 import json
-from dash import dcc, html, Input, Output, State, MATCH,ALL
+from dash import dcc, html, Input, Output, State, MATCH,ALL, callback_context
 import dash_bootstrap_components as dbc
 import os
 
@@ -43,6 +45,60 @@ datasets={
     'Compound':data_compound
 
 }
+algorithm_representation = html.Div([
+    html.H3(html.H2("Visualizador de Datasets"),
+
+                        # Selector de dataset
+
+                        "Selecciona los datos y el metodo de clusterizacion"),
+                        dcc.Dropdown(
+                                id='data_dropdown',
+                                options=[{'label': k, 'value': k} for k in datasets.keys()],
+                                value=list(datasets.keys())[0]
+                            ),
+                        html.Div(id='dataset_selected'),
+                        html.Label("Selecciona el algoritmo de clustering"),
+                        dcc.Dropdown(
+                            id='algorithm_dropdown',
+                            options=[{'label': k, 'value': k} for k in clust_algorithms],
+                            value='none'  # valor inicial, será actualizado dinámicamente
+                        ),
+                        dcc.Store(id='store-dbscan-parametros'),
+                        dcc.Store(id='clustered_data'),
+                        dbc.Button("Abrir/cerrar parámetros algoritmos", id="btn-popover", n_clicks=0),
+                        dbc.Popover(
+                                [
+                                    dbc.PopoverHeader("Parámetros algoritmos"),
+                                    dbc.PopoverBody([
+                                        dbc.PopoverBody(id="popover-body"),  # ← Este es dinámico
+
+                                    ])
+                                ],
+                                id="popover-dbscan",
+                                target="btn-popover",  # Ancla el popover al botón
+                               # trigger="click",       # Se abre al hacer clic
+                                placement="bottom",    # Aparece debajo del botón
+                                is_open=False,          # Estado inicial cerrado
+                                style={
+                                        "backgroundColor": "white",
+                                        "padding": "15px",
+                                        "borderRadius": "10px",
+                                        "boxShadow": "0px 4px 8px rgba(0, 0, 0, 0.2)",
+                                        "zIndex": 2000  # Asegura que se superponga a lo de detrás
+                                    }
+                            ),
+                       html.Hr(),
+                       html.H3("Datos de los puntos seleccionados"),
+                       #dcc.Graph(id="scatter-plot"),
+                        html.Div([
+                            html.Div([
+                                dcc.Graph(id='scatter-plot-solution')
+                            ], style={"width": "50%", "display": "inline-block"}),
+
+                            html.Div([
+                                dcc.Graph(id='scatter-plot-algorithm')
+                            ], style={"width": "50%", "display": "inline-block"})
+                        ], style={"display": "flex"}),])
 app = dash.Dash(__name__,suppress_callback_exceptions=True)
 
 # Si no existe la columna "grupo_manual", créala
@@ -55,7 +111,81 @@ if "grupo_manual" not in datos.columns:
 datos['id'] = datos.index
 todos_los_grupos = pd.DataFrame({"group": datos["group"].astype(str).unique()})
 
-app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
+def get_icon(icon):
+    return DashIconify(icon=icon, height=16)
+
+
+app.layout = dmc.MantineProvider(
+    html.Div([
+dmc.Container([
+        dcc.Location(id="_pages_location"),
+        dcc.Store(id="store_sidebar_visible", data=True),  # Estado del menú lateral
+
+        # Botón superior para mostrar/ocultar menú
+    dmc.Group(
+        children=[
+            dmc.Button("Mostrar/Ocultar menú", id="toggle_sidebar", variant="light")
+        ],
+        style={"marginTop": "1rem", "marginBottom": "1rem", "justifyContent": "flex-start"}
+    ),
+
+    # Layout horizontal con menú y contenido
+    dmc.Group(
+        children=[
+            # Sidebar
+            dmc.Stack(
+                id="sidebar",
+                children=[
+                    dmc.NavLink(label="Home", href="/home", active="exact"),
+                    dmc.NavLink(label="Representación algoritmos", href="/algorithm_use", active="partial",
+                                id={"type": "navlink", "index": "/algorithm_use"}),
+                    dmc.NavLink(
+                        label="With description",
+                        description="Additional information",
+                        leftSection=dmc.Badge("3", size="xs", variant="filled", color="red", w=16, h=16, p=0),
+                    ),
+                ],
+                style={"width": "240px"}
+            ),
+
+            # Contenido principal
+            html.Div(id="page-content", style={"flex": 1, "padding": "2rem"})
+        ],
+        grow=True,  # ← permite que el contenido crezca
+        align="flex-start"  # ← alinea arriba el stack y el contenido
+    )
+    ])
+])
+)
+@app.callback(
+    Output({"type": "navlink", "index": ALL}, "active"),
+    Input("_pages_location", "pathname")
+)
+def update_navlinks(pathname):
+    return [
+        "partial" if pathname.startswith(control["id"]["index"]) else False
+        for control in callback_context.outputs_list
+    ]
+
+@app.callback(
+    Output("page-content", "children"),
+    Input("_pages_location", "pathname")
+)
+def mostrar_pagina(pathname):
+    if pathname == "/algorithm_use":
+        return dmc.Paper(
+            children=[
+               algorithm_representation
+            ],
+            p="md",
+            shadow="sm",
+            radius="md",
+        )
+    return dmc.Text("Selecciona una opción del menú.")
+
+"""
+app.layout = html.Div([
+    html.H3(html.H2("Visualizador de Datasets"),
 
 
                         # Selector de dataset
@@ -122,9 +252,9 @@ app.layout = html.Div([html.H3(html.H2("Visualizador de Datasets"),
                        html.Button("Calcular porcentaje", id="calcular_porcentaje"),
                        html.Div(id="porcentaje")
                        ])
+"""
 
 #Callback para abrir/cerrar popover
-
 @app.callback(
     Output("popover-dbscan", "is_open"),
     Input("btn-popover", "n_clicks"),
@@ -622,6 +752,6 @@ def guardar_y_mostrar(n_clicks, dataset, algoritmo, parametros, datos_clusteriza
     )
 
     return tabla
-
 if __name__ == "__main__":
     app.run(debug=True)
+
