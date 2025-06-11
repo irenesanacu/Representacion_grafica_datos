@@ -146,14 +146,19 @@ def actualizar_contenido_popover(algoritmo):
 
     inputs = []
     for param in parametros_por_algoritmo[algoritmo]:
-        inputs.append(
-            dcc.Input(
-                id={"type": "param-clustering", "param": param},
-                type="number",
-                placeholder=param,
-                style={"width": "100%", "marginBottom": "10px"}
+        row = dbc.Row([
+            dbc.Col(html.Label(param + ":"), width="auto"),
+            dbc.Col(
+                dcc.Input(
+                    id={"type": "param-clustering", "param": param},
+                    type="number",
+                    placeholder=param,
+                    style={"width": "100%"}
+                ),
+                width=10
             )
-        )
+        ], className="mb-2")
+        inputs.append(row)
 
     inputs.append(
         dbc.Button("Guardar", id="guardar-config", size="sm", color="primary")
