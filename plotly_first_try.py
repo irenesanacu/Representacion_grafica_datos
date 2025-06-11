@@ -117,46 +117,47 @@ def get_icon(icon):
 
 app.layout = dmc.MantineProvider(
     html.Div([
-dmc.Container([
         dcc.Location(id="_pages_location"),
-        dcc.Store(id="store_sidebar_visible", data=True),  # Estado del menú lateral
+        dcc.Store(id="store_sidebar_visible", data=True),
 
-        # Botón superior para mostrar/ocultar menú
-    dmc.Group(
-        children=[
-            dmc.Button("Mostrar/Ocultar menú", id="toggle_sidebar", variant="light")
-        ],
-        style={"marginTop": "1rem", "marginBottom": "1rem", "justifyContent": "flex-start"}
-    ),
+        # Botón superior
+        dmc.Group(
+            children=[
+                dmc.Button("Mostrar/Ocultar menú", id="toggle_sidebar", variant="light")
+            ],
+            style={"marginTop": "1rem", "marginBottom": "1rem", "justifyContent": "flex-start"}
+        ),
 
-    # Layout horizontal con menú y contenido
-    dmc.Group(
-        children=[
-            # Sidebar
+        # Contenedor flex verdadero
+        html.Div([
+            # Menú lateral
             dmc.Stack(
                 id="sidebar",
                 children=[
                     dmc.NavLink(label="Home", href="/home", active="exact"),
                     dmc.NavLink(label="Representación algoritmos", href="/algorithm_use", active="partial",
                                 id={"type": "navlink", "index": "/algorithm_use"}),
-                    dmc.NavLink(
-                        label="With description",
-                        description="Additional information",
-                        leftSection=dmc.Badge("3", size="xs", variant="filled", color="red", w=16, h=16, p=0),
-                    ),
                 ],
-                style={"width": "240px"}
+                style={
+                    "width": "20%",
+                    "height": "100vh",
+                    "borderRight": "1px solid #ccc",
+                    "padding": "1rem"
+                }
             ),
 
             # Contenido principal
-            html.Div(id="page-content", style={"flex": 1, "padding": "2rem"})
-        ],
-        grow=True,  # ← permite que el contenido crezca
-        align="flex-start"  # ← alinea arriba el stack y el contenido
-    )
+            html.Div(
+                id="page-content",
+                style={
+                    "width": "80%",
+                    "padding": "2rem"
+                }
+            )
+        ], style={"display": "flex", "width": "100%"})  # ← Aquí está la clave
     ])
-])
 )
+
 @app.callback(
     Output({"type": "navlink", "index": ALL}, "active"),
     Input("_pages_location", "pathname")
