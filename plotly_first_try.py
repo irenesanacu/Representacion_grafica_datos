@@ -121,6 +121,7 @@ app.layout = dmc.MantineProvider(
         dcc.Store(id="store_sidebar_visible", data=True),
 
         # Botón superior
+
         dmc.Group(
             children=[
                 dmc.Button("Mostrar/Ocultar menú", id="toggle_sidebar", variant="light")
@@ -167,6 +168,42 @@ def update_navlinks(pathname):
         "partial" if pathname.startswith(control["id"]["index"]) else False
         for control in callback_context.outputs_list
     ]
+@app.callback(
+    Output("store_sidebar_visible", "data"),
+    Input("toggle_sidebar", "n_clicks"),
+    State("store_sidebar_visible", "data"),
+    prevent_initial_call=True
+)
+def toggle_sidebar(n, current_state):
+    return not current_state
+@app.callback(
+    Output("sidebar", "style"),
+    Output("page-content", "style"),
+    Input("store_sidebar_visible", "data")
+)
+def ajustar_estilos_menu(visible):
+    if visible:
+        return (
+            {
+                "width": "20%",
+                "height": "100vh",
+                "borderRight": "1px solid #ccc",
+                "padding": "1rem"
+            },
+            {
+                "width": "80%",
+                "padding": "2rem"
+            }
+        )
+    else:
+        return (
+            {"display": "none"},
+            {
+                "width": "100%",
+                "padding": "2rem"
+            }
+        )
+
 
 @app.callback(
     Output("page-content", "children"),
