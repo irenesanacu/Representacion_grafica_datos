@@ -15,12 +15,15 @@ from dash import dcc, html, Input, Output, State, MATCH,ALL, callback_context
 import dash_bootstrap_components as dbc
 import os
 import ast
+import copy
+
 
 
 CSV_LOG_PATH = "resultados_algoritmos.csv"
 
 
-
+#if os.path.exists(CSV_LOG_PATH):
+ #   os.remove(CSV_LOG_PATH)
 if not os.path.exists(CSV_LOG_PATH):
     import csv
     with open(CSV_LOG_PATH, mode='w', newline='') as file:
@@ -103,7 +106,9 @@ algorithm_representation = html.Div([
                             ], style={"width": "50%", "display": "inline-block"}),
                             html.Div(html.Button("Guardar resultado", id="btn-guardar", n_clicks=0, className="btn btn-success"),)
 
-                        ], style={"display": "flex"}),])
+                        ], style={"display": "flex"}),
+                        dcc.Graph(id='matriz')
+                        ])
 app = dash.Dash(__name__,suppress_callback_exceptions=True)
 
 # Si no existe la columna "grupo_manual", créala
@@ -208,46 +213,12 @@ def toggle_sidebar(n, current_state):
     Output("page-content", "style"),
     Input("store_sidebar_visible", "data")
 )
-def ajustar_estilos_menu(visible):
-    if visible:
-        return (
-            {
-                "width": "20%",
-                "height": "100vh",
-                "borderRight": "1px solid #ccc",
-                "padding": "1rem"
-            },
-            {
-                "width": "80%",
-                "padding": "2rem"
-            }
-        )
-    else:
-        return (
-            {"display": "none"},
-            {
-                "width": "100%",
-                "padding": "2rem"
-            }
-        )
-def higher_percentage_parameters(data_name,df_log,algorithm,default_parameters):
-
-        df_log["Aciertos (%)"] = pd.to_numeric(df_log["Aciertos (%)"], errors="coerce")
-
-        # Filtrar por dataset y algoritmo
-        filter = (df_log["Dataset"] == data_name) & (df_log["Algoritmo"] == algorithm)
-        df_filtered = df_log[filter]
-
-        if df_filtered.empty:
-            return default_parameters
-
-        best_row = df_filtered.loc[df_filtered["Aciertos (%)"].idxmax()]
-        parametros = best_row["Parametros"]
-        if isinstance(parametros, str):
-            parametros = ast.literal_eval(parametros)
-
-        return parametros
-
+def aplicar_hdbscan(df, n_min):
+    df = df.copy()
+    df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
+    hdb = hdbscan.HDBSCAN(min_cluster_size=n_min)
+    df["grupo_clust"] = hdb.fit_predict(df)
+    return df
 def Density_peak(df,parameters):
     X = df[['x', 'y']].values
     distances = pairwise_distances(X)
@@ -328,6 +299,182 @@ def Quickshift(df,parameters):
 
         labels[i] = cluster_map[root]
     return labels
+def ajustar_estilos_menu(visible):
+    if visible:
+        return (
+            {
+                "width": "20%",
+                "height": "100vh",
+                "borderRight": "1px solid #ccc",
+                "padding": "1rem"
+            },
+            {
+                "width": "80%",
+                "padding": "2rem"
+            }
+        )
+    else:
+        return (
+            {"display": "none"},
+            {
+                "width": "100%",
+                "padding": "2rem"
+            }
+        )
+def order_data(df):
+
+    # 1. Crear matriz de confusión (clustering vs real)
+    real_labels = df['group'].unique()
+    clust_labels = df['grupo_clust'].unique()
+
+    n_real = len(real_labels)
+    n_clust = len(clust_labels)
+    if n_real < n_clust:
+        n_to_add = n_clust - n_real
+       # print(f"Añadiendo {n_to_add} grupos ficticios a 'group'")
+
+        max_real = df['group'].max()
+        for i in range(n_to_add):
+            nuevo_grupo = max_real + i + 1
+            fila_ficticia = df.iloc[0].copy()
+            fila_ficticia['group'] = nuevo_grupo
+            df = pd.concat([df, pd.DataFrame([fila_ficticia])], ignore_index=True)
+
+    matrix = pd.crosstab(df['grupo_clust'], df['group'])
+    # 2. Convertir a numpy para usar el algoritmo húngaro
+    matriz_numpy = matrix.to_numpy()
+
+    # 3. Aplicar algoritmo (¡invertimos el signo para maximizar aciertos!)
+    fila_ind, col_ind = linear_sum_assignment(-matriz_numpy)
+
+    # 4. Crear el mapeo: grupo del clustering → grupo real
+    grupos_cluster = matrix.index.to_numpy()
+    grupos_reales = matrix.columns.to_numpy()
+
+    mapeo = {grupos_cluster[fila]: grupos_reales[col] for fila, col in zip(fila_ind, col_ind)}
+
+    # 5. Reasignar los grupos del clustering
+    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo)
+    grupos_originales = sorted(df['grupo_clust_reasignado'].dropna().unique())
+
+    # Crear un nuevo mapeo secuencial: {original → nuevo}
+    orden_cluster = [k for k, _ in sorted(mapeo.items(), key=lambda item: item[1])]
+    mapeo_final = {cluster_id: i + 1 for i, cluster_id in enumerate(orden_cluster)}
+
+    # Aplicar el mapeo final directamente al grupo_clust
+    df['grupo_clust_reasignado']=df['grupo_clust'].map(mapeo_final)
+    df['correct_dot']=df['group']==df['grupo_clust_reasignado']
+
+    return df['correct_dot'],df['grupo_clust_reasignado']
+def get_best_param(algorithm,df):
+
+    coords = df[["x", "y"]]
+    best={"eps": 0.1, "n_min": 1, "n_clusters": 1, "d_percent": 1, "sigma": 0.1}
+    best_percent=0.0
+    if algorithm == "DBscan":
+        best_percent = 0.0
+
+        for n_min in range(1, 10):
+            for eps in [round(0.1 + i * 0.1, 2) for i in range(20)]:  # hasta eps=1.35
+                dbscan = DBSCAN(eps=eps, min_samples=n_min)
+                coords = df[["x", "y"]]
+                df_dbscan=df.copy()
+                df_dbscan["grupo_clust"] = dbscan.fit_predict(coords)
+                #df["grupo_clust_reasignado"] = order_data(df)
+                df_dbscan["correct_dot_dbscan"],df_dbscan["reasignado_dbscan"] = order_data(df_dbscan)
+
+               # df_dbscan=order_data(df_dbscan)
+                #df_dbscan["correct_dot"] = df_dbscan["group"] == df_dbscan["grupo_clust_reasignado"]
+                percent = round(100 * df_dbscan["correct_dot_dbscan"].mean(), 2)
+               # print("media correct dot:", df_dbscan["correct_dot_dbscan"].mean())
+
+                #print(percent)
+                #print(df_dbscan[["group", "grupo_clust","correct_dot_dbscan", "grupo_clust_reasignado"]].head(10))
+                #print(f"HDBSCAN: eps = {eps}, n_min = {n_min}, percent = {percent}")
+                if percent > best_percent:
+                    best_percent = percent
+                    best={"eps": eps, "n_min": n_min}
+                if percent == 100:
+                    return [best,best_percent]
+
+    elif algorithm == "HDBscan":
+        best = {}
+        best_percent = 0.0
+        #df_hdbscan = df_hdbscan.sort_values(by=["x", "y"]).reset_index(drop=True)
+        for n_min in range(2, 10):
+            # 1. Copiar y ordenar el DataFrame (evitar modificar el original)
+            df_hdbscan = df.copy().sort_values(by=["x", "y"]).reset_index(drop=True)
+
+            # 2. Aplicar HDBSCAN (sin modificar df)
+            df_clustered = aplicar_hdbscan(df_hdbscan, n_min)
+
+            # 3. Calcular precisión
+            correct_dot, reasignado = order_data(df_clustered)
+            percent = round(100 * correct_dot.mean(), 2)
+
+            # 4. Actualizar el mejor resultado
+            if percent > best_percent:
+                best_percent = percent
+                best = {"n_min": n_min}
+            if percent == 100:
+                return [best, best_percent]
+
+    elif algorithm == "Quickshift":
+        best_percent = 0.0
+
+        for n_min in range(1, 10):
+            for sigma in [round(0.1 + i * 0.1, 2) for i in range(20)]:  # hasta eps=1.35
+
+                df_quickshift = df.copy()
+                parameters={'sigma': sigma, 'n_min': n_min}
+                df_quickshift["grupo_clust"] = Quickshift(df_quickshift,parameters)
+                df_quickshift["correct_dot_quickshift"], df_quickshift["reasignado_quick_shift"] = order_data(df_quickshift)
+
+                percent = round(100 * df_quickshift["correct_dot_quickshift"].mean(), 2)
+                if percent > best_percent:
+                    best_percent = percent
+                    best = {"sigma": sigma, "n_min": n_min}
+                if percent == 100:
+                    return [best, best_percent]
+    elif algorithm == "Densitypeak":
+        best_percent = 0.0
+
+        for n_clusters in range(1, 10):
+            for d_percent in [round(0.1 + i * 0.1, 2) for i in range(20)]:  # hasta eps=1.35
+
+                df_density = df.copy()
+                parameters={'d_percent': d_percent, 'n_clusters': n_clusters}
+                df_density["grupo_clust"] = Density_peak(df_density,parameters)
+                df_density["correct_dot_density"], df_density["reasignado_density"] = order_data(df_density)
+
+                percent = round(100 * df_density["correct_dot_density"].mean(), 2)
+                if percent > best_percent:
+                    best_percent = percent
+                    best = {"d_percent": d_percent, "n_clusters": n_clusters}
+                if percent == 100:
+                    return [best, best_percent]
+
+    return [best,best_percent]
+
+
+def higher_percentage_parameters(data_name,df_log,algorithm,default_parameters):
+
+        df_log["Aciertos (%)"] = pd.to_numeric(df_log["Aciertos (%)"], errors="coerce")
+
+        # Filtrar por dataset y algoritmo
+        filter = (df_log["Dataset"] == data_name) & (df_log["Algoritmo"] == algorithm)
+        df_filtered = df_log[filter]
+
+        if df_filtered.empty:
+            return default_parameters
+
+        best_row = df_filtered.loc[df_filtered["Aciertos (%)"].idxmax()]
+        parametros = best_row["Parametros"]
+        if isinstance(parametros, str):
+            parametros = ast.literal_eval(parametros)
+
+        return parametros
+
 def comparison_data(df,data_name,CSV):
     df_log = pd.read_csv(CSV, encoding="latin1")
     #data=datasets[df]
@@ -368,10 +515,14 @@ def comparison_data(df,data_name,CSV):
 
     df["Quickshift"] = Quickshift(df,quickshift_param)
     figure_quickshift = px.scatter(df, x="x", y="y", color="Quickshift",hover_data=["group", "Quickshift"])
-    return [figure_DBscan,figure_HDBscan,figure_densitypeak,figure_quickshift]
+    return [figure_DBscan,figure_HDBscan,figure_densitypeak,figure_quickshift,hdbscan_param]
 
 
-def figures_comparison(figures):
+def figures_comparison(figures,df):
+    param=get_best_param("HDBscan", df)
+    #param=get_best_param("Quickshift", df)
+    #param = get_best_param("Densitypeak", df)
+
     return dmc.Paper(
     children=[
         dmc.Title("Resultados de clustering", order=2, mb="md"),
@@ -380,13 +531,16 @@ def figures_comparison(figures):
                 html.Div(
                     children=[
                         dmc.Text("Resultado de DBSCAN", size="sm", mt="xs"),
+                       # dmc.Text(f" eps: {param[0]['eps']}, n_min: {param[0]['n_min']}, porcentaje:{param[1]} ", size="sm", mt="xs"),
+
                         dcc.Graph(figure=figures[0]),  # DBSCAN
                     ],
                         style={"width": "50%", "display": "inline-block"}
                 ),
                 html.Div(
                     children=[
-                        dmc.Text("Resultado de HDBSCAN", size="sm", mt="xs"),
+                        dmc.Text(f"Resultado de HDBSCAN, porcentaje imagen: {figures[4]}", size="sm", mt="xs"),
+                        dmc.Text(f" n_min: {param[0]['n_min']}, porcentaje:{param[1]} ", size="sm", mt="xs"),
 
                         dcc.Graph(figure=figures[1]),  # HDBSCAN
                     ],
@@ -395,6 +549,8 @@ def figures_comparison(figures):
                 html.Div(
                     children=[
                         dmc.Text("Resultado de Density Peak", size="sm", mt="xs"),
+                        #dmc.Text(f" n_clusters: {param[0]['n_clusters']},d_percent: {param[0]['d_percent']}, porcentaje:{param[1]} ",size="sm", mt="xs"),
+
                         dcc.Graph(figure=figures[2]),  # Density Peak
                     ],
                     style={"width": "50%", "display": "inline-block"}
@@ -402,7 +558,10 @@ def figures_comparison(figures):
                 html.Div(
                     children=[
                         dmc.Text("Resultado de Quickshift", size="sm", mt="xs"),
+                      #  dmc.Text(f" n_min: {param[0]['n_min']},sigma: {param[0]['sigma']}, porcentaje:{param[1]} ",size="sm", mt="xs"),
+
                         dcc.Graph(figure=figures[3]),  # Quickshift
+
                     ],
                     style={"width": "50%", "display": "inline-block"}
                 ),
@@ -448,6 +607,7 @@ def table_page(CSV):
     )
     return tabla
 
+
 @app.callback(
     Output("page-content", "children"),
     Input("_pages_location", "pathname")
@@ -468,13 +628,13 @@ def mostrar_pagina(pathname):
         return dmc.Paper([tabla], p="md", shadow="sm", radius="md")
     if  pathname == "/comparison_datos_formas":
         figures= comparison_data(datasets["Formas"],"Formas",CSV_LOG_PATH)
-        return figures_comparison(figures)
+        return figures_comparison(figures,datasets["Formas"])
     if pathname == "/comparison_compound":
         figures = comparison_data(datasets["Compound"], "Compound", CSV_LOG_PATH)
-        return figures_comparison(figures)
+        return figures_comparison(figures,datasets["Compound"])
     if pathname == "/comparison_pathbased":
         figures = comparison_data(datasets["Pathbased"], "Pathbased", CSV_LOG_PATH)
-        return figures_comparison(figures)
+        return figures_comparison(figures,datasets["Pathbased"])
 
     return dmc.Text("Selecciona una opción del menú.")
 
@@ -640,97 +800,27 @@ def print_dots(dataset_value,algorithm,dbscan_params):
         dbscan = DBSCAN(eps=eps, min_samples=n_min)
         df["grupo_clust"] = dbscan.fit_predict(coords)
         #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
+
     elif algorithm =='HDBscan':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
-        hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
-        df["grupo_clust"] = hdbscan_a.fit_predict(df)
+
+        df=aplicar_hdbscan(df,n_min)
+        #df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
+        #hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
+        #df["grupo_clust"] = hdbscan_a.fit_predict(df)
         #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
     elif algorithm =='Density peak':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
 
-        X = df[['x', 'y']].values
-        distances = pairwise_distances(X)
-        dc = np.percentile(distances, d_percent)
-        rho = np.sum(distances < dc, axis=1) - 1
-        delta = np.zeros_like(rho, dtype=float)
-        nearest_higher = np.zeros_like(rho, dtype=int)
-
-        for i in range(len(X)):
-            higher = np.where(rho > rho[i])[0]
-            if len(higher) > 0:
-                j = higher[np.argmin(distances[i, higher])]
-                delta[i] = distances[i, j]
-                nearest_higher[i] = j
-            else:
-                delta[i] = np.max(distances[i])
-                nearest_higher[i] = i
-            # Paso 3: Calcular gamma
-        gamma = rho * delta
-        centers = np.argsort(gamma)[-n_clusters:]
-
-        # Paso 4: Asignar clústeres
-        labels = -np.ones(len(X), dtype=int)
-        for idx, c in enumerate(centers):
-            labels[c] = idx
-
-        order = np.argsort(-rho)
-        for i in order:
-            if labels[i] == -1:
-                labels[i] = labels[nearest_higher[i]]
-        df["grupo_clust"]=labels
+        densitypeak_param={'d_percent':d_percent,'n_clusters':n_clusters}
+        df["grupo_clust"]= Density_peak(df,densitypeak_param)
         #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
 
     elif algorithm == 'Quickshift':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
+        quickshift_param={'sigma':influencia,'n_min':n_min}
 
-        X = df[['x', 'y']].values
-        n = len(X)
-
-        # Estimación de densidad por kernel Gaussiano
-        nbrs = NearestNeighbors(radius=3 * influencia).fit(X)
-        radius_neighbors = nbrs.radius_neighbors(X, return_distance=True)
-
-        densities = np.zeros(n)
-        for i in range(n):
-            distances_i = radius_neighbors[0][i]
-            densities[i] = np.sum(np.exp(- (distances_i ** 2) / (2 * influencia ** 2)))
-
-        # Conexión a vecino más cercano con mayor densidad
-        parents = np.full(n, -1)
-        for i in range(n):
-            neighbors = radius_neighbors[1][i]
-            valid = [j for j in neighbors if densities[j] > densities[i]]
-            if valid:
-                j_min = valid[np.argmin(np.linalg.norm(X[valid] - X[i], axis=1))]
-                parents[i] = j_min
-            else:
-                parents[i] = i  # raíz
-
-        # Asignar etiquetas de clúster a cada raíz distinta
-        cluster_map = {}
-        labels = np.full(n, -1)
-        cluster_id = 0
-
-        for i in range(n):
-            # Seguir el árbol hasta la raíz
-            path = []
-            node = i
-            while parents[node] != node:
-                path.append(node)
-                node = parents[node]
-            root = node
-
-            # Crear nuevo clúster si no existe
-            if root not in cluster_map:
-                cluster_members = [j for j in range(n) if parents[j] == root or j == root]
-                if len(cluster_members) >= n_min:
-                    cluster_map[root] = cluster_id
-                    cluster_id += 1
-                else:
-                    cluster_map[root] = -1  # ruido
-
-            labels[i] = cluster_map[root]
-        df["grupo_clust"] = labels
+        df["grupo_clust"] = Quickshift(df,quickshift_param)
     if "grupo_clust" not in df:
         df['grupo_clust']=df['group']
    # df['grupo_clust']=df['grupo_clust']+2
@@ -739,47 +829,10 @@ def print_dots(dataset_value,algorithm,dbscan_params):
         df['grupo_clust']=0
     if 'group' not in df.columns and 'grupo_manual' in df.columns:
         df['group'] = df['grupo_manual']
-    # 1. Crear matriz de confusión (clustering vs real)
-    real_labels = df['group'].unique()
-    clust_labels = df['grupo_clust'].unique()
 
-    n_real = len(real_labels)
-    n_clust = len(clust_labels)
-    if n_real < n_clust:
-        n_to_add = n_clust - n_real
-
-        max_real = df['group'].max()
-        for i in range(n_to_add):
-            nuevo_grupo = max_real + i + 1
-            fila_ficticia = df.iloc[0].copy()
-            fila_ficticia['group'] = nuevo_grupo
-            df = pd.concat([df, pd.DataFrame([fila_ficticia])], ignore_index=True)
-
-    matrix = pd.crosstab(df['grupo_clust'], df['group'])
-    # 2. Convertir a numpy para usar el algoritmo húngaro
-    matriz_numpy = matrix.to_numpy()
-
-    # 3. Aplicar algoritmo (¡invertimos el signo para maximizar aciertos!)
-    fila_ind, col_ind = linear_sum_assignment(-matriz_numpy)
-
-    # 4. Crear el mapeo: grupo del clustering → grupo real
-    grupos_cluster = matrix.index.to_numpy()
-    grupos_reales = matrix.columns.to_numpy()
-
-    mapeo = {grupos_cluster[fila]: grupos_reales[col] for fila, col in zip(fila_ind, col_ind)}
-
-    # 5. Reasignar los grupos del clustering
-    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo)
-    grupos_originales = sorted(df['grupo_clust_reasignado'].dropna().unique())
-
-    # Crear un nuevo mapeo secuencial: {original → nuevo}
-    orden_cluster = [k for k, _ in sorted(mapeo.items(), key=lambda item: item[1])]
-    mapeo_final = {cluster_id: i + 1 for i, cluster_id in enumerate(orden_cluster)}
-
-    # Aplicar el mapeo final directamente al grupo_clust
-    df['grupo_clust_reasignado'] = df['grupo_clust'].map(mapeo_final)
-    df['correct_dot']=df['group']==df['grupo_clust_reasignado']
-
+    df['correct_dot'],df['grupo_clust_reasignado']=order_data(df[["group","grupo_clust","x", "y"]])
+   # df['correct_dot']=df['group']==df['grupo_clust_reasignado']
+    #print(df)
 
     figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                                   hover_data=["group", "grupo_clust_reasignado", "grupo_clust"])
@@ -992,9 +1045,20 @@ def guardar_y_mostrar(n_clicks, dataset, algoritmo, parametros, datos_clusteriza
 
     # Añadir al CSV
     #df_log = pd.read_csv(CSV_LOG_PATH)
-    df_log = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
-    df_log = pd.concat([df_log, pd.DataFrame([fila])], ignore_index=True)
-    df_log.to_csv(CSV_LOG_PATH, index=False)
+    try:
+        df_log = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
+    except FileNotFoundError:
+        df_log = pd.DataFrame(columns=["Dataset", "Algoritmo", "Parametros", "Aciertos (%)"])
+    existe = (
+            (df_log["Dataset"] == dataset) &
+            (df_log["Algoritmo"] == algoritmo) &
+            (df_log["Parametros"].astype(str) == str(parametros))
+    ).any()
+
+    if not existe:
+       # df_log = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
+        df_log = pd.concat([df_log, pd.DataFrame([fila])], ignore_index=True)
+        df_log.to_csv(CSV_LOG_PATH, index=False)
     # Ordenar por Dataset y Algoritmo
     df_log["Aciertos (%)"] = pd.to_numeric(df_log["Aciertos (%)"], errors="coerce")
     df_log.sort_values(by=["Dataset", "Algoritmo", "Aciertos (%)"], ascending=[True, True, False], inplace=True)
