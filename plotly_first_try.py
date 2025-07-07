@@ -10,6 +10,8 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objs as pgo
 import pandas as pd
+import base64
+import io
 import dash
 from dash import dcc, html, Input, Output, State, MATCH,ALL, callback_context
 import dash_bootstrap_components as dbc
@@ -45,6 +47,16 @@ datos = datos_formas.copy()
 data_compound=pd.read_csv("compound.txt")
 pathbased=pd.read_csv("pathbased_1")
 clust_algorithms=['none','DBscan','HDBscan','Density peak','Quickshift']
+# Define el directorio donde se guardarán los archivos subidos
+# Esto creará una carpeta 'datasets_uploaded' en el mismo directorio donde ejecutes tu script.
+UPLOAD_DIRECTORY = os.path.join(os.getcwd(), "datasets_uploaded")
+
+# Asegúrate de que el directorio de carga exista. Si no, lo crea.
+if not os.path.exists(UPLOAD_DIRECTORY):
+    os.makedirs(UPLOAD_DIRECTORY)
+
+# Diccionario global para almacenar los DataFrames cargados en memoria
+# Este diccionario se mantiene en el servidor Dash.
 datasets={
     'Pathbased':pathbased,
     'Formas': datos,
@@ -147,6 +159,8 @@ app.layout = dmc.MantineProvider(
             dmc.Stack(
                 id="sidebar",
                 children=[
+                    dmc.NavLink(label="Datos", href="/show_data", active="partial",
+                                id={"type": "navlink", "index": "/show_data"}),
                     dmc.NavLink(label="Representación algoritmos", href="/algorithm_use", active="partial",
                                 id={"type": "navlink", "index": "/algorithm_use"}),
                     dmc.NavLink(label="Representación gráfica",  children=[
@@ -607,41 +621,165 @@ def table_page(CSV):
     )
     return tabla
 
+def parse_contents(contents, filename):
+    content_type, content_string = contents.split(',')
+    decoded = base64.b64decode(content_string)
+
+    file_path = os.path.join(UPLOAD_DIRECTORY, filename)
+
+    try:
+        # Verifica la extensión del archivo para decidir cómo leerlo
+        with open(file_path, 'wb') as f:
+            f.write(decoded)
+        if 'csv' in filename or 'txt' in filename:
+            df_uploaded = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+            # Validar que el archivo contenga las columnas requeridas
+            required_columns = ['x', 'y', 'group']
+            if all(col in df_uploaded.columns for col in required_columns):
+                # Guarda el DataFrame en el diccionario global
+                # Si multiple=True, considera un esquema de nombres más robusto (ej. 'Upload_nombre_archivo')
+              #  datasets['Upload_latest'] = df_uploaded  # Se usará 'Upload_latest' para el último archivo válido subido
+                return df_uploaded,html.Div([
+                    html.H5(f"Archivo cargado correctamente: {filename}"),
+                    html.P("Contiene las columnas 'x', 'y', 'group'."),
+                    html.P(f"El DataFrame ha sido guardado en 'datasets['Upload_latest']'."),
+                    html.Hr(),
+                    html.H4("Primeras 5 filas del archivo subido:"),
+                    dash.dash_table.DataTable(
+                        data=df_uploaded.head().to_dict('records'),
+                        columns=[{'name': i, 'id': i} for i in df_uploaded.columns],
+                        style_table={'overflowX': 'auto'}
+                    )
+                ]), True
+            else:
+                return None, html.Div([
+                    f"Error: El archivo '{filename}' no contiene todas las columnas requeridas ('x', 'y', 'group').",
+                    html.P(f"Columnas encontradas: {df_uploaded.columns.tolist()}")
+                ], style={'color': 'red'}), False
+        # Puedes añadir más 'elif' para otros tipos de archivo si los necesitas (ej. Excel)
+        # elif 'xls' in filename:
+        #     df_uploaded = pd.read_excel(io.BytesIO(decoded))
+        #     # ... (validación de columnas similar) ...
+        else:
+            return html.Div([
+                'Error: Tipo de archivo no soportado. Solo se aceptan CSV o TXT con el formato especificado.'
+            ], style={'color': 'red'})
+    except Exception as e:
+        print(f"Error procesando {filename}: {e}")
+        return None, html.Div([
+            f'Hubo un error al procesar el archivo "{filename}". Asegúrate de que sea un archivo de texto válido con delimitadores correctos.',
+            html.P(f"Detalle del error: {e}")
+        ], style={'color': 'red'}), False
+
 
 @app.callback(
     Output("page-content", "children"),
     Input("_pages_location", "pathname")
 )
 def mostrar_pagina(pathname):
-    if pathname == "/algorithm_use":
+
+    if pathname == "/show_data":
         return dmc.Paper(
+            # The style dictionary should be a direct argument to dmc.Paper,
+            # not inside the children list or after other children.
+            style={'fontFamily': 'Inter, sans-serif', 'padding': '20px', 'backgroundColor': '#f9f9f9',
+                   'borderRadius': '10px', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'},
             children=[
-                algorithm_representation
-            ],
-            p="md",
-            shadow="sm",
-            radius="md",
+                html.H1("Dash App con Carga de Archivos y Gestión de Datasets",
+                        style={'textAlign': 'center', 'color': '#333'}),
+
+                html.Div([
+                    html.H3("Cargar Nuevo Dataset:", style={'color': '#555'}),
+                    html.P("Paso 1: Sube tu archivo CSV o TXT."),
+                    dcc.Upload(
+                        id='upload-data',
+                        children=html.Div([
+                            html.I(className="fas fa-upload", style={'marginRight': '10px'}),
+                            html.Span('Arrastra y suelta o '),
+                            html.A('Selecciona un archivo', style={'color': '#007bff', 'textDecoration': 'underline'})
+                        ]),
+                        style={
+                            'width': '100%',
+                            'height': '60px',
+                            'lineHeight': '60px',
+                            'borderWidth': '2px',
+                            'borderStyle': 'dashed',
+                            'borderRadius': '8px',
+                            'textAlign': 'center',
+                            'margin': '10px 0',
+                            'cursor': 'pointer',
+                            'backgroundColor': '#e8f0fe',
+                            'borderColor': '#a0c8ff',
+                            'color': '#333',
+                            'fontSize': '1.1em'
+                        },
+                        multiple=False  # Solo permite subir un archivo a la vez para este flujo
+                    ),
+                    html.Div(id='output-upload-status',
+                             style={'marginTop': '15px', 'padding': '10px', 'border': '1px solid #ddd',
+                                    'borderRadius': '5px', 'backgroundColor': '#fff'}),
+
+                    html.P("Paso 2: Asigna un nombre al dataset."),
+                    dcc.Input(
+                        id='dataset-name-input',
+                        type='text',
+                        placeholder='Introduce el nombre del dataset (ej: MisDatos)',
+                        style={'width': 'calc(100% - 16px)', 'padding': '8px', 'margin': '10px 0',
+                               'borderRadius': '5px', 'border': '1px solid #ccc'}
+                    ),
+                    html.Button(
+                        'Guardar Dataset',
+                        id='save-dataset-button',
+                        n_clicks=0,
+                        style={
+                            'backgroundColor': '#28a745', 'color': 'white', 'padding': '10px 20px',
+                            'border': 'none', 'borderRadius': '5px', 'cursor': 'pointer', 'fontSize': '1em',
+                            'margin': '10px 0'
+                        }
+                    ),
+                    html.Div(id='output-save-status', style={'marginTop': '10px', 'color': '#333'}),
+
+                ], style={'padding': '20px', 'border': '1px solid #e0e0e0', 'borderRadius': '10px',
+                          'marginBottom': '30px'}),
+
+                html.Hr(style={'margin': '30px 0', 'borderColor': '#eee'}),
+
+                html.H3("Estado de los Datasets Cargados:", style={'color': '#555'}),
+                html.Div(id='datasets-status',
+                         style={'padding': '10px', 'border': '1px solid #ddd', 'borderRadius': '5px',
+                                'backgroundColor': '#fff'}),
+
+                html.Hr(style={'margin': '30px 0', 'borderColor': '#eee'}),
+
+                html.H3("Selecciona un Dataset:", style={'color': '#555'}),
+                dcc.Dropdown(
+                    id='data_dropdown',
+                    options=[{'label': k, 'value': k} for k in datasets.keys()],
+                    value=list(datasets.keys())[0] if datasets else None,
+                    clearable=False,
+                    style={'margin': '10px 0', 'borderRadius': '5px'}
+                ),
+                html.Div(id='selected-dataset-info',
+                         style={'marginTop': '15px', 'padding': '10px', 'border': '1px solid #ddd',
+                                'borderRadius': '5px', 'backgroundColor': '#fff'}),
+
+                # Componente oculto para almacenar temporalmente el DataFrame pre-cargado
+                dcc.Store(id='temp-dataframe-storage'),
+                # Componente oculto para el dummy output, para encadenar callbacks
+                html.Div(id='dummy-output-for-dropdown-update', style={'display': 'none'})
+            ]
         )
-
-    if pathname == "/general_table":
-        tabla=table_page(CSV_LOG_PATH)
-        return dmc.Paper([tabla], p="md", shadow="sm", radius="md")
-    if  pathname == "/comparison_datos_formas":
-        figures= comparison_data(datasets["Formas"],"Formas",CSV_LOG_PATH)
-        return figures_comparison(figures,datasets["Formas"])
-    if pathname == "/comparison_compound":
-        figures = comparison_data(datasets["Compound"], "Compound", CSV_LOG_PATH)
-        return figures_comparison(figures,datasets["Compound"])
-    if pathname == "/comparison_pathbased":
-        figures = comparison_data(datasets["Pathbased"], "Pathbased", CSV_LOG_PATH)
-        return figures_comparison(figures,datasets["Pathbased"])
-
-    return dmc.Text("Selecciona una opción del menú.")
-
-"""
-app.layout = html.Div([
-    html.H3(html.H2("Visualizador de Datasets"),
-
+    if pathname == "/algorithm_use":
+       # return dmc.Paper(
+        #    children=[
+         #       algorithm_representation
+          #  ],
+           # p="md",
+            #shadow="sm",
+           # radius="md",)
+        return dmc.Paper(
+            children=[html.Div([
+            html.H3(html.H2("Visualizador de Datasets"),
 
                         # Selector de dataset
 
@@ -682,11 +820,7 @@ app.layout = html.Div([
                                         "zIndex": 2000  # Asegura que se superponga a lo de detrás
                                     }
                             ),
-
-
-
                        html.Hr(),
-                       html.H3("Datos de los puntos seleccionados"),
                        #dcc.Graph(id="scatter-plot"),
                         html.Div([
                             html.Div([
@@ -695,19 +829,142 @@ app.layout = html.Div([
 
                             html.Div([
                                 dcc.Graph(id='scatter-plot-algorithm')
-                            ], style={"width": "50%", "display": "inline-block"})
+                            ], style={"width": "50%", "display": "inline-block"}),
+                            html.Div(html.Button("Guardar resultado", id="btn-guardar", n_clicks=0, className="btn btn-success"),)
+
                         ], style={"display": "flex"}),
-                       dcc.Graph(id="matriz"),
-                       html.H3("Asignar nuevo grupo a los puntos seleccionados"), #arreglar
-                       dcc.Input(id="nuevo-grupo", type="text", placeholder="Ingresa el nuevo grupo"),
-                       html.Button("Asignar grupo", id="asignar-grupo-btn"),
-                       html.Div(id="confirmacion-asignacion"),
-                       html.Button("Guardar resultado", id="btn-guardar", n_clicks=0, className="btn btn-success"),
-                       html.Div(id="tabla-resultados"),
-                       html.Button("Calcular porcentaje", id="calcular_porcentaje"),
-                       html.Div(id="porcentaje")
-                       ])
-"""
+                        dcc.Graph(id='matriz')
+                        ])],
+            p="md",
+            shadow="sm",
+            radius="md",)
+
+    if pathname == "/general_table":
+        tabla=table_page(CSV_LOG_PATH)
+        return dmc.Paper([tabla], p="md", shadow="sm", radius="md")
+    if  pathname == "/comparison_datos_formas":
+        figures= comparison_data(datasets["Formas"],"Formas",CSV_LOG_PATH)
+        return figures_comparison(figures,datasets["Formas"])
+    if pathname == "/comparison_compound":
+        figures = comparison_data(datasets["Compound"], "Compound", CSV_LOG_PATH)
+        return figures_comparison(figures,datasets["Compound"])
+    if pathname == "/comparison_pathbased":
+        figures = comparison_data(datasets["Pathbased"], "Pathbased", CSV_LOG_PATH)
+        return figures_comparison(figures,datasets["Pathbased"])
+
+    return dmc.Text("Selecciona una opción del menú.")
+
+@app.callback(
+    Output('output-upload-status', 'children'),
+    Output('temp-dataframe-storage', 'data'), # Almacena el DataFrame como JSON
+    Input('upload-data', 'contents'),
+    State('upload-data', 'filename')
+)
+def handle_upload_and_preview(contents, filename):
+    """
+    Este callback se activa cuando se sube un archivo.
+    Procesa el archivo y lo almacena temporalmente en dcc.Store.
+    """
+    if contents is not None:
+        df, message, is_valid = parse_contents(contents, filename)
+        if is_valid:
+            # Retorna el mensaje de previsualización y el DF serializado
+            return message, df.to_json(date_format='iso', orient='split')
+        else:
+            # Retorna el mensaje de error y un valor nulo para el DF
+            return message, None
+    return html.Div("Sube un archivo CSV o TXT para empezar el proceso.", style={'color': '#666'}), None
+
+# Callback para guardar el dataset con el nombre especificado
+@app.callback(
+    Output('output-save-status', 'children'),
+    Output('dataset-name-input', 'value'), # Limpia el campo de texto
+    Output('dummy-output-for-dropdown-update', 'children'), # Trigger para otros callbacks
+    Input('save-dataset-button', 'n_clicks'),
+    State('dataset-name-input', 'value'),
+    State('temp-dataframe-storage', 'data')
+)
+def save_dataset_to_global(n_clicks, dataset_name, temp_data_json):
+    #Este callback se activa cuando se presiona el botón 'Guardar Dataset'.
+    #Guarda el DataFrame temporal en el diccionario global 'datasets' con el nombre dado.
+
+    if n_clicks > 0:
+        if not dataset_name:
+            return html.Div("Por favor, introduce un nombre para el dataset.", style={'color': 'red'}), dataset_name, ""
+        if temp_data_json is None:
+            return html.Div("No hay un archivo válido pre-cargado para guardar. Sube uno primero.", style={'color': 'red'}), dataset_name, ""
+
+        try:
+            df = pd.read_json(temp_data_json, orient='split')
+            datasets[dataset_name] = df
+            # Limpiar el nombre temporal si existía
+            if 'Upload_latest_temp' in datasets:
+                del datasets['Upload_latest_temp']
+
+            return html.Div(f"Dataset '{dataset_name}' guardado exitosamente.", style={'color': 'green'}), "", "updated" # 'updated' para el dummy trigger
+        except Exception as e:
+            return html.Div(f"Error al guardar el dataset: {e}", style={'color': 'red'}), dataset_name, ""
+    return "", "", "" # Valor inicial para evitar errores al cargar la página
+
+# Callback para actualizar el estado de los datasets (para visualización en la UI)
+
+@app.callback(Output('datasets-status', 'children'),
+              Input('dummy-output-for-dropdown-update', 'children'))
+def update_datasets_status(dummy_input):
+    """
+    Este callback se activa cada vez que el dummy output de la subida o guardado cambia,
+    reflejando el estado actual del diccionario `datasets`.
+    """
+    status_list = []
+    if not datasets:
+        status_list.append(html.Li("No hay datasets cargados todavía.", style={'color': '#888'}))
+    else:
+        for key, df in datasets.items():
+            status_list.append(html.Li(f"'{key}': {df.shape[0]} filas, {df.shape[1]} columnas"))
+    return html.Ul(status_list, style={'listStyleType': 'none', 'padding': '0'})
+
+# Callback para actualizar las opciones del Dropdown de selección de dataset
+@app.callback(
+    Output('data_dropdown', 'options'),
+    Output('data_dropdown', 'value'),
+    Input('dummy-output-for-dropdown-update', 'children')
+)
+def update_dataset_dropdown(dummy_input):
+    """
+    Este callback actualiza las opciones del dcc.Dropdown con las claves
+    actuales del diccionario `datasets`.
+    """
+    current_dataset_keys = list(datasets.keys())
+    options = [{'label': k, 'value': k} for k in current_dataset_keys]
+
+    # Decide el valor por defecto. Si hay un nuevo dataset, selecciona el último guardado;
+    # de lo contrario, vuelve al primer dataset existente o None si no hay.
+    default_value = None
+    if current_dataset_keys:
+        # Intenta seleccionar el último dataset añadido (si el usuario le dio un nombre)
+        # Esto es heurístico, podrías necesitar un estado más robusto para "último añadido".
+        # Por simplicidad, aquí seleccionamos el primero si no hay una indicación clara del "último".
+        default_value = current_dataset_keys[-1] # Selecciona el último añadido por defecto
+
+    return options, default_value
+
+# Callback para manejar la subida del archivo y la validación
+@app.callback(Output('output-data-upload', 'children'),
+              Input('upload-data', 'contents'),
+              State('upload-data', 'filename'))
+def update_output(list_of_contents, list_of_filenames): # Renamed arguments for clarity
+    if list_of_contents is not None:
+        children = []
+        # Loop through each uploaded file
+        for i, contents in enumerate(list_of_contents):
+            # Pass the individual file's contents and filename to parse_contents
+            filename = list_of_filenames[i]
+            # Assuming parse_contents doesn't need 'date' for now, or you pass it if needed
+            children.append(parse_contents(contents, filename))
+        return children
+    return html.Div("Sube un archivo CSV para empezar.")
+
+
 
 #Callback para abrir/cerrar popover
 @app.callback(
@@ -847,6 +1104,8 @@ def print_dots(dataset_value,algorithm,dbscan_params):
     Input('store-dbscan-parametros', 'data')  # ← aquí lo traes
 
 )
+
+
 def print_matrix(data_drop_down,data_,algorithm_drop_down,params):
 
     df=pd.DataFrame(data_)
@@ -854,8 +1113,10 @@ def print_matrix(data_drop_down,data_,algorithm_drop_down,params):
         df=datasets[data_drop_down].copy()
         process=algorithm_drop_down
         param=params
-
-
+    df['group'] = pd.to_numeric(df['group'], errors='coerce')
+    df['grupo'] = pd.to_numeric(df['grupo_clust_reasignado'], errors='coerce')
+    df['group'] = df['group'].fillna(-1).astype(int)
+    df['grupo_clust_reasignado'] = df['grupo_clust_reasignado'].fillna(-1).astype(int)
 
     #df['grupo_clust_reasignado'] = df['grupo_clust_reasignado'].fillna(df['group'])
 
