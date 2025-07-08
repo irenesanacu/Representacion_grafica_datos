@@ -63,6 +63,50 @@ datasets={
     'Compound':data_compound
 
 }
+
+NON_DELETABLE_DATASETS = ["Formas", "Compound", "Pathbased"]
+
+def load_persisted_datasets_from_disk():
+    """
+    Carga los DataFrames válidos que se encuentran en UPLOAD_DIRECTORY
+    en el diccionario global 'datasets'.
+    """
+    loaded_count = 0
+    for filename in os.listdir(UPLOAD_DIRECTORY):
+        file_path = os.path.join(UPLOAD_DIRECTORY, filename)
+        # Verifica que sea un archivo y que sea CSV o TXT
+        if os.path.isfile(file_path) and (filename.endswith('.csv') or filename.endswith('.txt')):
+            try:
+                df = pd.read_csv(file_path)
+                required_columns = ['x', 'y', 'group']  # Columnas que esperas en tus datasets
+
+                # Valida las columnas del archivo cargado
+                if all(col in df.columns for col in required_columns):
+                    # Genera una clave para el dataset (nombre del archivo sin extensión)
+                    key_name = os.path.splitext(filename)[0]
+                    datasets[key_name] = df  # Añade el DataFrame al diccionario global
+                    loaded_count += 1
+                else:
+                    print(
+                        f"DEBUG: Saltando '{filename}': Columnas requeridas ({', '.join(required_columns)}) no encontradas.")
+            except Exception as e:
+                print(f"DEBUG: Error al cargar el archivo persistido '{filename}': {e}")
+
+
+# --- LLAMADA A LA FUNCIÓN AL INICIAR LA APLICACIÓN ---
+load_persisted_datasets_from_disk()
+
+# --- Tus cargas de datasets predefinidos (Formas, Compound, Pathbased, sample_data) ---
+# Estas irían después de la llamada a load_persisted_datasets_from_disk().
+# Si un dataset persistido tiene el mismo nombre que uno predefinido, el último en cargarse (aquí, el predefinido)
+# sobrescribirá al anterior en el diccionario 'datasets'. Considera el orden si esto es un problema.
+
+try:
+    datos_formas = pd.read_csv("datos.txt")
+    datasets['Formas'] = datos_formas.copy()
+except FileNotFoundError:
+    print("Advertencia: 'datos.txt' no encontrado. 'Formas' no se cargará.")
+
 general_table=html.Div(id="tabla-resultados")
 algorithm_representation = html.Div([
     html.H3(html.H2("Visualizador de Datasets"),
@@ -142,7 +186,8 @@ app.layout = dmc.MantineProvider(
         dcc.Location(id="_pages_location"),
         dcc.Store(id="store_sidebar_visible", data=True),
         dcc.Store(id="store_guardado"),  # ← Añadido
-
+        dcc.Store(id='temp-dataframe-storage'),
+        html.Div(id='dummy-output-for-dropdown-update', style={'display': 'none'}),  # Y este también
 
         # Botón superior
 
@@ -163,27 +208,27 @@ app.layout = dmc.MantineProvider(
                                 id={"type": "navlink", "index": "/show_data"}),
                     dmc.NavLink(label="Representación algoritmos", href="/algorithm_use", active="partial",
                                 id={"type": "navlink", "index": "/algorithm_use"}),
-                    dmc.NavLink(label="Representación gráfica",  children=[
+                    dmc.NavLink(label="Representación gráfica", children=[
                         dmc.NavLink(label="Comparación de algoritmos", children=[
-                            dmc.NavLink(label="Dataset: datos formas", href="/comparison_datos_formas", active="partial",
-                                id={"type": "navlink", "index": "/comparison_datos_formas"}),
+                            html.Div(id={"type": "comparison-navlink-container", "index": "dynamic"}),
+                            # Contenedor dinámico de NavLinks
+                            dmc.NavLink(label="Dataset: datos formas", href="/comparison_datos_formas",
+                                        active="partial",
+                                        id={"type": "navlink", "index": "/comparison_datos_formas"}),
                             dmc.NavLink(label="Dataset: Compound", href="/comparison_compound", active="partial",
-                                id={"type": "navlink", "index": "/comparison_compound"}),
+                                        id={"type": "navlink", "index": "/comparison_compound"}),
                             dmc.NavLink(label="Dataset: Pathbased", href="/comparison_pathbased", active="partial",
-                                id={"type": "navlink", "index": "/comparison_pathbased"}),
-
+                                        id={"type": "navlink", "index": "/comparison_pathbased"}),
                         ]),
                         dmc.NavLink(label="Puntos de dispersión"),
                         dmc.NavLink(label="Grafico de barras"),
                     ]),
                     dmc.NavLink(label="Tabla de resultados", children=[
                         dmc.NavLink(label="Tabla general", href="/general_table", active="partial",
-                                id={"type": "navlink", "index": "/general_table"}),
-
+                                    id={"type": "navlink", "index": "/general_table"}),
                         dmc.NavLink(label="Tabla de datos con distintos algoritmos"),
                         dmc.NavLink(label="Tabla de algoritmos con distintos datos"),
                     ]),
-
                 ],
                 style={
                     "width": "20%",
@@ -204,6 +249,28 @@ app.layout = dmc.MantineProvider(
         ], style={"display": "flex", "width": "100%"})  # ← Aquí está la clave
     ])
 )
+@app.callback(
+    Output({"type": "comparison-navlink-container", "index": "dynamic"}, "children"),
+    Input('dummy-output-for-dropdown-update', 'children'), # Se activa al guardar un dataset
+    Input("_pages_location", "pathname") # Se activa al navegar para refrescar la lista
+)
+def update_dynamic_comparison_navlinks(dummy_input, pathname):
+    dynamic_navlinks = []
+    # Itera sobre todos los datasets cargados
+    for key in datasets.keys():
+        # Excluye los datasets base si solo quieres mostrar los subidos por el usuario,
+        # o incluye todos si quieres una lista completa.
+        # Aquí, mostramos todos los datasets aparte de los ya fijos en NavLink
+        if key not in ["Formas", "Compound", "Pathbased", "sample_data"]: # Ajusta según tus datasets fijos
+            dynamic_navlinks.append(
+                dmc.NavLink(
+                    label=f"Dataset: {key}",
+                    href=f"/comparison_{key}", # Genera la ruta dinámica
+                    active="partial",
+                    id={"type": "navlink", "index": f"/comparison_{key}"} # ID dinámico para el NavLink
+                )
+            )
+    return html.Div(dynamic_navlinks) # Envuelve la lista de NavLinks en un div
 
 @app.callback(
     Output({"type": "navlink", "index": ALL}, "active"),
@@ -222,12 +289,8 @@ def update_navlinks(pathname):
 )
 def toggle_sidebar(n, current_state):
     return not current_state
-@app.callback(
-    Output("sidebar", "style"),
-    Output("page-content", "style"),
-    Input("store_sidebar_visible", "data")
-)
-def aplicar_hdbscan(df, n_min):
+
+def aplicar_hdbscan(df,n_min):
     df = df.copy()
     df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
     hdb = hdbscan.HDBSCAN(min_cluster_size=n_min)
@@ -313,6 +376,12 @@ def Quickshift(df,parameters):
 
         labels[i] = cluster_map[root]
     return labels
+
+@app.callback(
+    Output("sidebar", "style"),
+    Output("page-content", "style"),
+    Input("store_sidebar_visible", "data")
+)
 def ajustar_estilos_menu(visible):
     if visible:
         return (
@@ -553,8 +622,8 @@ def figures_comparison(figures,df):
                 ),
                 html.Div(
                     children=[
-                        dmc.Text(f"Resultado de HDBSCAN, porcentaje imagen: {figures[4]}", size="sm", mt="xs"),
-                        dmc.Text(f" n_min: {param[0]['n_min']}, porcentaje:{param[1]} ", size="sm", mt="xs"),
+                        dmc.Text(f"Resultado de HDBSCAN", size="sm", mt="xs"),
+                      #  dmc.Text(f" n_min: {param[0]['n_min']}, porcentaje:{param[1]} ", size="sm", mt="xs"),
 
                         dcc.Graph(figure=figures[1]),  # HDBSCAN
                     ],
@@ -753,20 +822,34 @@ def mostrar_pagina(pathname):
 
                 html.H3("Selecciona un Dataset:", style={'color': '#555'}),
                 dcc.Dropdown(
-                    id='data_dropdown',
+                    id='data_dropdown_upload_page',
                     options=[{'label': k, 'value': k} for k in datasets.keys()],
                     value=list(datasets.keys())[0] if datasets else None,
                     clearable=False,
                     style={'margin': '10px 0', 'borderRadius': '5px'}
                 ),
+                html.Div([
+                    dbc.Button(
+                        "Borrar Dataset Seleccionado",
+                        id="delete-dataset-button",
+                        n_clicks=0,
+                        className="me-2"  # Margen a la derecha para Bootstrap
+                    ),
+                    dmc.Text(
+                        id='output-delete-status',  # Aquí se mostrarán mensajes de éxito/error de borrado
+                        style={'marginTop': '5px'}
+                    )
+                ], style={'marginTop': '10px', 'marginBottom': '10px'}),
+                # Estilo para el contenedor del botón y mensaje
+
                 html.Div(id='selected-dataset-info',
                          style={'marginTop': '15px', 'padding': '10px', 'border': '1px solid #ddd',
                                 'borderRadius': '5px', 'backgroundColor': '#fff'}),
 
                 # Componente oculto para almacenar temporalmente el DataFrame pre-cargado
-                dcc.Store(id='temp-dataframe-storage'),
+               # dcc.Store(id='temp-dataframe-storage'),
                 # Componente oculto para el dummy output, para encadenar callbacks
-                html.Div(id='dummy-output-for-dropdown-update', style={'display': 'none'})
+               # html.Div(id='dummy-output-for-dropdown-update', style={'display': 'none'})
             ]
         )
     if pathname == "/algorithm_use":
@@ -842,6 +925,16 @@ def mostrar_pagina(pathname):
     if pathname == "/general_table":
         tabla=table_page(CSV_LOG_PATH)
         return dmc.Paper([tabla], p="md", shadow="sm", radius="md")
+    if pathname.startswith("/comparison_"):
+        # Extraemos el nombre del dataset de la ruta
+        # Por ejemplo, si pathname es "/comparison_circulos", dataset_name será "circulos"
+        dataset_name = pathname.replace("/comparison_", "")
+
+        # Verificamos si este dataset existe en tu diccionario global 'datasets'
+        if dataset_name in datasets:
+            # Si existe, llamamos a tus funciones de comparación con el DataFrame y nombre correctos
+            figures = comparison_data(datasets[dataset_name], dataset_name, CSV_LOG_PATH)
+            return figures_comparison(figures, datasets[dataset_name])
     if  pathname == "/comparison_datos_formas":
         figures= comparison_data(datasets["Formas"],"Formas",CSV_LOG_PATH)
         return figures_comparison(figures,datasets["Formas"])
@@ -853,6 +946,63 @@ def mostrar_pagina(pathname):
         return figures_comparison(figures,datasets["Pathbased"])
 
     return dmc.Text("Selecciona una opción del menú.")
+
+
+@app.callback(
+    Output('output-delete-status', 'children'),  # Para mensajes de feedback al usuario
+    Output('dummy-output-for-dropdown-update', 'children', allow_duplicate=True),
+    # Para refrescar dropdowns y status (necesita Dash >= 2.9.0)
+    Output('selected-dataset-info', 'children', allow_duplicate=True),  # Para limpiar la info del dataset borrado
+    Input('delete-dataset-button', 'n_clicks'),
+    State('data_dropdown_upload_page', 'value'),  # Obtiene el valor seleccionado actualmente en el dropdown
+    prevent_initial_call=True  # Evita que el callback se dispare al cargar la página inicialmente
+)
+def delete_dataset(n_clicks, selected_dataset_name):
+    # Solo actúa si el botón ha sido clickeado y hay un dataset seleccionado
+    if n_clicks > 0 and selected_dataset_name:
+
+        # 1. Verificar si el dataset es uno de los NO BORRABLES
+        if selected_dataset_name in NON_DELETABLE_DATASETS:
+            return dmc.Text(f"¡Error! No se puede borrar el dataset predefinido '{selected_dataset_name}'.",
+                            c="red"), \
+                dash.no_update, \
+                dash.no_update  # dash.no_update para no modificar los otros outputs
+
+        try:
+            # 2. Eliminar el dataset del diccionario global en memoria
+            if selected_dataset_name in datasets:
+                del datasets[selected_dataset_name]
+            else:
+                # Esto no debería ocurrir si el dropdown está actualizado correctamente
+                return dmc.Text(f"Error: Dataset '{selected_dataset_name}' no encontrado en memoria.", c="red"), \
+                    dash.no_update, \
+                    dash.no_update
+
+            # 3. Eliminar el archivo correspondiente del disco
+            # Asumimos que los datasets subidos se guardan como .csv
+            file_path_on_disk = os.path.join(UPLOAD_DIRECTORY, f"{selected_dataset_name}.csv")
+            if os.path.exists(file_path_on_disk):
+                os.remove(file_path_on_disk)
+                print(f"DEBUG: Archivo '{file_path_on_disk}' eliminado del disco.")
+            else:
+                print(
+                    f"DEBUG: Advertencia: Archivo '{file_path_on_disk}' no encontrado en disco, pero eliminado de memoria.")
+
+            # 4. Proporcionar feedback al usuario y disparar actualizaciones de la UI
+            print(f"DEBUG: Dataset '{selected_dataset_name}' borrado exitosamente y archivos.")
+            return dmc.Text(f"Dataset '{selected_dataset_name}' borrado exitosamente.", c="green"), \
+                "deleted", \
+                html.Div("Dataset borrado. Selecciona otro dataset.")  # Limpiar el panel de información
+
+        except Exception as e:
+            print(f"DEBUG: Error inesperado al borrar dataset '{selected_dataset_name}': {e}")
+            return dmc.Text(f"Error al borrar dataset '{selected_dataset_name}': {e}", c="red"), \
+                dash.no_update, \
+                dash.no_update  # Mantener el estado actual de los otros outputs
+
+    # Valores por defecto si no se clickea el botón o no hay selección válida
+    return "", dash.no_update, dash.no_update
+
 
 @app.callback(
     Output('output-upload-status', 'children'),
@@ -896,10 +1046,11 @@ def save_dataset_to_global(n_clicks, dataset_name, temp_data_json):
 
         try:
             df = pd.read_json(temp_data_json, orient='split')
+            file_path_on_disk = os.path.join(UPLOAD_DIRECTORY, f"{dataset_name}.csv")
+            df.to_csv(file_path_on_disk, index=False)
+
             datasets[dataset_name] = df
             # Limpiar el nombre temporal si existía
-            if 'Upload_latest_temp' in datasets:
-                del datasets['Upload_latest_temp']
 
             return html.Div(f"Dataset '{dataset_name}' guardado exitosamente.", style={'color': 'green'}), "", "updated" # 'updated' para el dummy trigger
         except Exception as e:
@@ -925,8 +1076,8 @@ def update_datasets_status(dummy_input):
 
 # Callback para actualizar las opciones del Dropdown de selección de dataset
 @app.callback(
-    Output('data_dropdown', 'options'),
-    Output('data_dropdown', 'value'),
+    Output('data_dropdown_upload_page', 'options'),
+    Output('data_dropdown_upload_page', 'value'),
     Input('dummy-output-for-dropdown-update', 'children')
 )
 def update_dataset_dropdown(dummy_input):
@@ -1056,22 +1207,16 @@ def print_dots(dataset_value,algorithm,dbscan_params):
     elif algorithm == 'DBscan':
         dbscan = DBSCAN(eps=eps, min_samples=n_min)
         df["grupo_clust"] = dbscan.fit_predict(coords)
-        #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
 
     elif algorithm =='HDBscan':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
 
         df=aplicar_hdbscan(df,n_min)
-        #df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
-        #hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=n_min)
-        #df["grupo_clust"] = hdbscan_a.fit_predict(df)
-        #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
     elif algorithm =='Density peak':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
 
         densitypeak_param={'d_percent':d_percent,'n_clusters':n_clusters}
         df["grupo_clust"]= Density_peak(df,densitypeak_param)
-        #figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",hover_data=["group", "grupo_manual", "grupo_clust"])
 
     elif algorithm == 'Quickshift':
         df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
@@ -1088,8 +1233,6 @@ def print_dots(dataset_value,algorithm,dbscan_params):
         df['group'] = df['grupo_manual']
 
     df['correct_dot'],df['grupo_clust_reasignado']=order_data(df[["group","grupo_clust","x", "y"]])
-   # df['correct_dot']=df['group']==df['grupo_clust_reasignado']
-    #print(df)
 
     figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
                                   hover_data=["group", "grupo_clust_reasignado", "grupo_clust"])
