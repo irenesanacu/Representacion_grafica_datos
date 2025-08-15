@@ -1,23 +1,22 @@
 import numpy as np
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
+import urllib.parse
 import hdbscan
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objs as pgo
 import pandas as pd
 import base64
 import io
 import dash
-from dash import dcc, html, Input, Output, State, MATCH,ALL, callback_context
+from dash import dcc, html, Input, Output, State, MATCH,ALL, callback_context, dash_table
 import dash_bootstrap_components as dbc
 import os
 import ast
-import copy
 
 
 
@@ -29,11 +28,30 @@ CSV_LOG_PATH = "resultados_algoritmos.csv"
 if not os.path.exists(CSV_LOG_PATH):
     import csv
     with open(CSV_LOG_PATH, mode='w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=["Dataset", "Algoritmo", "Parametros", "Aciertos (%)"])
+        writer = csv.DictWriter(file, fieldnames=["Dataset", "Algoritmo", "Parámetros", "Aciertos (%)"])
         writer.writeheader()
 
-
-
+display_page_inicio= dmc.Paper( children=[
+            html.Img(
+                src="assets/cabecera.png",  # <-- La ruta es el nombre del archivo dentro de 'assets'
+                alt="Logo de la UPM y de la ETSIDI",
+                style={
+                    "maxWidth": "70%",  # Ajusta el tamaño para que sea responsivo
+                    "height": "auto",
+                    "display": "block",
+                    "margin": "auto",
+                    "marginTop": "0px",
+                    "marginBottom": "60px"
+                }
+            ),
+            html.Div(html.Span("Trabajo Fin de Grado",style={"fontSize":"24px","display":"block","textAlign":"center"}),
+                     style={"display":"block"}),
+            html.Div(html.H1(html.Span("Análisis de algoritmos de clusterización por densidad e intercomparación",
+                                       style={"fontSize":"36px","fontWeight":"bold","display":"inline-block","textAlign":"center"}),)),
+           # html.H4("Autor: Irene Santalicecs Acuña")
+            ],
+            shadow="sm",
+            p="xl")
 
 parametros_por_algoritmo = {
     "DBscan": ["eps", "n_min"],
@@ -57,6 +75,7 @@ if not os.path.exists(UPLOAD_DIRECTORY):
 
 # Diccionario global para almacenar los DataFrames cargados en memoria
 # Este diccionario se mantiene en el servidor Dash.
+
 datasets={
     'Pathbased':pathbased,
     'Formas': datos,
@@ -77,7 +96,7 @@ def load_persisted_datasets_from_disk():
         # Verifica que sea un archivo y que sea CSV o TXT
         if os.path.isfile(file_path) and (filename.endswith('.csv') or filename.endswith('.txt')):
             try:
-                df = pd.read_csv(file_path)
+                df = pd.read_csv(file_path, encoding="latin1")
                 required_columns = ['x', 'y', 'group']  # Columnas que esperas en tus datasets
 
                 # Valida las columnas del archivo cargado
@@ -109,25 +128,53 @@ except FileNotFoundError:
 
 general_table=html.Div(id="tabla-resultados")
 algorithm_representation = html.Div([
-    html.H3(html.H2("Visualizador de Datasets"),
+    html.H2("Visualizador de Datasets"),
 
                         # Selector de dataset
+    dmc.Group([  # Este es el contenedor FLEX para las dos parejas
 
-                        "Selecciona los datos y el metodo de clusterizacion"),
-                        dcc.Dropdown(
-                                id='data_dropdown',
-                                options=[{'label': k, 'value': k} for k in datasets.keys()],
-                                value=list(datasets.keys())[0]
-                            ),
-                        html.Div(id='dataset_selected'),
-                        html.Label("Selecciona el algoritmo de clustering"),
-                        dcc.Dropdown(
-                            id='algorithm_dropdown',
-                            options=[{'label': k, 'value': k} for k in clust_algorithms],
-                            value='none'  # valor inicial, será actualizado dinámicamente
-                        ),
-                        dcc.Store(id='store-dbscan-parametros'),
-                        dcc.Store(id='clustered_data'),
+        # --- Primera pareja: Label y Dropdown de selección de dataset ---
+        html.Div([  # ESTE DIV CONTIENE EL LABEL Y EL DROPDOWN DE LA PRIMERA PAREJA
+            html.Label("Selecciona el data set",  # Texto de la etiqueta basado en la imagen
+                       style={'marginRight': '10px', 'whiteSpace': 'nowrap'}),
+            dcc.Dropdown(
+                id='data_dropdown_algorithm_page',  # Usar el ID único como acordamos
+                options=[{'label': k, 'value': k} for k in datasets.keys()],
+                value=list(datasets.keys())[0] if datasets else None,
+                clearable=False,
+                style={'minWidth': '150px', 'flexGrow': 1}  # flexGrow permite que el dropdown se expanda
+            )
+        ], style={'display': 'flex', 'alignItems': 'center', 'flexGrow': 1, 'flexShrink': 0}),
+        # display:flex para alinear el label y el dropdown. flexShrink:0 para que no se contraiga.
+        # --- IMPORTANTE: COMA AQUÍ para separar este Div del siguiente ---
+        # COMA FALTANTE --> ,
+
+        # --- Segunda pareja: Label y Dropdown de selección de algoritmo ---
+        html.Div([  # ESTE DIV CONTIENE EL LABEL Y EL DROPDOWN DE LA SEGUNDA PAREJA
+            html.Label("Selecciona el algoritmo de clustering",  # Texto de la etiqueta
+                       style={'marginRight': '10px', 'whiteSpace': 'nowrap'}),
+            dcc.Dropdown(
+                id='algorithm_dropdown',
+                options=[{'label': k, 'value': k} for k in clust_algorithms],
+                value='none',
+                clearable=False,
+                style={'minWidth': '150px', 'flexGrow': 1}
+            )
+        ], style={'display': 'flex', 'alignItems': 'center', 'flexGrow': 1, 'flexShrink': 0}),
+        # COMA FALTANTE --> , (si hubiera más elementos DENTRO de dmc.Group)
+
+    ], style={  # Estilo para el dmc.Group (el contenedor principal de las parejas)
+        'display': 'flex',  # Explícitamente lo pongo como flex, aunque dmc.Group ya debería serlo
+        'justifyContent': 'flex-start',  # Alinea las parejas al inicio
+        'gap': '20px',  # Espacio entre la primera y la segunda pareja
+        'flexWrap': 'nowrap',  # ¡CRUCIAL! Fuerza a que no se envuelvan a una nueva línea si el espacio es limitado
+        'marginBottom': '20px',  # Espacio debajo de este grupo
+        'width': '100%'  # Ocupa el 100% del ancho disponible para que flexbox funcione bien
+    }),
+            # --- ESTOS COMPONENTES VAN FUERA DEL dmc.Group SI NO DEBEN ESTAR EN LA MISMA LÍNEA ---
+            html.Div(id='dataset_selected'),  # Este va debajo del grupo de dropdowns
+            dcc.Store(id='store-dbscan-parametros'),
+            dcc.Store(id='clustered_data'),
                         dbc.Button("Abrir/cerrar parámetros algoritmos", id="btn-popover", n_clicks=0),
                         dbc.Popover(
                                 [
@@ -195,7 +242,7 @@ app.layout = dmc.MantineProvider(
             children=[
                 dmc.Button("Mostrar/Ocultar menú", id="toggle_sidebar", variant="light")
             ],
-            style={"marginTop": "1rem", "marginBottom": "1rem", "justifyContent": "flex-start"}
+            style={"marginTop": "0rem", "marginBottom": "1rem", "justifyContent": "flex-start","display": "inline-flex"}
         ),
 
         # Contenedor flex verdadero
@@ -204,30 +251,43 @@ app.layout = dmc.MantineProvider(
             dmc.Stack(
                 id="sidebar",
                 children=[
+                    dmc.NavLink(label="Inicio", href="/inicio", active="partial",
+                                id={"type": "navlink", "index": "/inicio"}),
                     dmc.NavLink(label="Datos", href="/show_data", active="partial",
                                 id={"type": "navlink", "index": "/show_data"}),
-                    dmc.NavLink(label="Representación algoritmos", href="/algorithm_use", active="partial",
+                    dmc.NavLink(label="Matriz de confusión", href="/algorithm_use", active="partial",
                                 id={"type": "navlink", "index": "/algorithm_use"}),
-                    dmc.NavLink(label="Representación gráfica", children=[
+                    dmc.NavLink(label="Intercomparación de algoritmos", children=[
                         dmc.NavLink(label="Comparación de algoritmos", children=[
                             html.Div(id={"type": "comparison-navlink-container", "index": "dynamic"}),
                             # Contenedor dinámico de NavLinks
-                            dmc.NavLink(label="Dataset: datos formas", href="/comparison_datos_formas",
-                                        active="partial",
-                                        id={"type": "navlink", "index": "/comparison_datos_formas"}),
-                            dmc.NavLink(label="Dataset: Compound", href="/comparison_compound", active="partial",
-                                        id={"type": "navlink", "index": "/comparison_compound"}),
-                            dmc.NavLink(label="Dataset: Pathbased", href="/comparison_pathbased", active="partial",
-                                        id={"type": "navlink", "index": "/comparison_pathbased"}),
+                            dmc.NavLink(label=dmc.Group(
+                            gap=4,  # Use 'gap' instead of 'spacing'
+                            children=[
+                                dmc.Text("Dataset:", fw=700), # "fw=700" for bold
+                                dmc.Text("datos formas")
+                            ],
+                            ), href="/comparison_Formas",active="partial",
+                                        id={"type": "navlink", "index": "/comparison_Formas"}),
+                            dmc.NavLink(label=dmc.Group(
+                            gap=4,  # Use 'gap' instead of 'spacing'
+                            children=[dmc.Text("Dataset:", fw=700),  dmc.Text("Compound")],),
+                                href="/comparison_Compound", active="partial",
+                                        id={"type": "navlink", "index": "/comparison_Compound"}),
+                            dmc.NavLink(label=dmc.Group(
+                            gap=4,  # Use 'gap' instead of 'spacing'
+                            children=[dmc.Text("Dataset:", fw=700),  dmc.Text("Pathbased")],),  href="/comparison_Pathbased", active="partial",
+                                        id={"type": "navlink", "index": "/comparison_Pathbased"}),
                         ]),
-                        dmc.NavLink(label="Puntos de dispersión"),
-                        dmc.NavLink(label="Grafico de barras"),
+                        dmc.NavLink(label="Gráfico de barras", href="/bar_chart", active="partial",
+                                        id={"type": "navlink", "index": "/bar_chart"}),
                     ]),
                     dmc.NavLink(label="Tabla de resultados", children=[
                         dmc.NavLink(label="Tabla general", href="/general_table", active="partial",
                                     id={"type": "navlink", "index": "/general_table"}),
                         dmc.NavLink(label="Tabla de datos con distintos algoritmos"),
-                        dmc.NavLink(label="Tabla de algoritmos con distintos datos"),
+                        dmc.NavLink(label="Tabla de algoritmos con distintos datos", href="/data_table", active="partial",
+                                    id={"type": "navlink", "index": "/data_table"}),
                     ]),
                 ],
                 style={
@@ -264,7 +324,9 @@ def update_dynamic_comparison_navlinks(dummy_input, pathname):
         if key not in ["Formas", "Compound", "Pathbased", "sample_data"]: # Ajusta según tus datasets fijos
             dynamic_navlinks.append(
                 dmc.NavLink(
-                    label=f"Dataset: {key}",
+                    label=dmc.Group(
+                        gap=4,  # Use 'gap' instead of 'spacing'
+                        children=[dmc.Text("Dataset:", fw=700), dmc.Text(f" {key}")], ),
                     href=f"/comparison_{key}", # Genera la ruta dinámica
                     active="partial",
                     id={"type": "navlink", "index": f"/comparison_{key}"} # ID dinámico para el NavLink
@@ -552,7 +614,7 @@ def higher_percentage_parameters(data_name,df_log,algorithm,default_parameters):
             return default_parameters
 
         best_row = df_filtered.loc[df_filtered["Aciertos (%)"].idxmax()]
-        parametros = best_row["Parametros"]
+        parametros = best_row["Parámetros"]
         if isinstance(parametros, str):
             parametros = ast.literal_eval(parametros)
 
@@ -560,11 +622,8 @@ def higher_percentage_parameters(data_name,df_log,algorithm,default_parameters):
 
 def comparison_data(df,data_name,CSV):
     df_log = pd.read_csv(CSV, encoding="latin1")
-    #data=datasets[df]
     coords = df[['x', 'y']]
 
-    figure_solution = px.scatter(df, x="x", y="y", color="group",
-                                 hover_data=["group"])
     dbscan_param={"eps": 1.1, "n_min": 5}
     dbscan_param=higher_percentage_parameters(data_name,df_log,"DBscan",dbscan_param)
 
@@ -572,7 +631,7 @@ def comparison_data(df,data_name,CSV):
         dbscan_param = {"eps": 1.1, "n_min": 5}
     dbscan = DBSCAN(eps=dbscan_param["eps"], min_samples=dbscan_param["n_min"])
     df["DBscan"] = dbscan.fit_predict(coords)
-    figure_DBscan = px.scatter(df, x="x", y="y", color="DBscan",hover_data=["group", "DBscan"])
+    figure_DBscan = px.scatter(df, x="x", y="y", color="DBscan",hover_data=["group", "DBscan"],height=300)
 
     df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
     hdbscan_param={"n_min": 5}
@@ -581,7 +640,7 @@ def comparison_data(df,data_name,CSV):
 
     hdbscan_a = hdbscan.HDBSCAN(min_cluster_size=hdbscan_param["n_min"])
     df["HDBscan"] = hdbscan_a.fit_predict(df)
-    figure_HDBscan = px.scatter(df, x="x", y="y", color="HDBscan",hover_data=["group", "HDBscan"])
+    figure_HDBscan = px.scatter(df, x="x", y="y", color="HDBscan",hover_data=["group", "HDBscan"],height=300)
 
     df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
     densitypeak_param={"d_percent": 1, "n_clusters": 5}
@@ -589,7 +648,7 @@ def comparison_data(df,data_name,CSV):
 
 
     df["Density peak"] = Density_peak(df,densitypeak_param)
-    figure_densitypeak = px.scatter(df, x="x", y="y", color="Density peak",hover_data=["group", "Density peak"])
+    figure_densitypeak = px.scatter(df, x="x", y="y", color="Density peak",hover_data=["group", "Density peak"],height=300)
 
     df = df.sort_values(by=["x", "y"]).reset_index(drop=True)
     quickshift_param={"sigma": 1, "n_min": 5}
@@ -597,7 +656,7 @@ def comparison_data(df,data_name,CSV):
 
 
     df["Quickshift"] = Quickshift(df,quickshift_param)
-    figure_quickshift = px.scatter(df, x="x", y="y", color="Quickshift",hover_data=["group", "Quickshift"])
+    figure_quickshift = px.scatter(df, x="x", y="y", color="Quickshift",hover_data=["group", "Quickshift"],height=300)
     return [figure_DBscan,figure_HDBscan,figure_densitypeak,figure_quickshift,hdbscan_param]
 
 
@@ -607,57 +666,50 @@ def figures_comparison(figures,df):
     #param = get_best_param("Densitypeak", df)
 
     return dmc.Paper(
-    children=[
-        dmc.Title("Resultados de clustering", order=2, mb="md"),
         html.Div(
             children=[
+                # Contenedor flex principal que envuelve todos los gráficos
                 html.Div(
                     children=[
-                        dmc.Text("Resultado de DBSCAN", size="sm", mt="xs"),
-                       # dmc.Text(f" eps: {param[0]['eps']}, n_min: {param[0]['n_min']}, porcentaje:{param[1]} ", size="sm", mt="xs"),
-
-                        dcc.Graph(figure=figures[0]),  # DBSCAN
+                        # Gráfico 1 (DBSCAN) - con su propio contenedor flex interno
+                        html.Div(
+                            children=[
+                                dmc.Text("Resultado de DBSCAN", size="sm", style={'margin': '0 0 0px 0'}),
+                                dcc.Graph(figure=figures[0], style={'marginTop': '0'}),
+                            ],
+                            style={"flexBasis": "calc(50% - 5px)", "boxSizing": "border-box", "margin": "0"}
+                        ),
+                        # Gráfico 2 (HDBSCAN)
+                        html.Div(
+                            children=[
+                                dmc.Text("Resultado de HDBSCAN", size="sm", style={'margin': '0 0 0px 0'}),
+                                dcc.Graph(figure=figures[1], style={'marginTop': '0'}),
+                            ],
+                            style={"flexBasis": "calc(50% - 5px)", "boxSizing": "border-box", "margin": "0"}
+                        ),
+                        # Gráfico 3 (Density Peak)
+                        html.Div(
+                            children=[
+                                dmc.Text("Resultado de Density Peak", size="sm", style={'margin': '0 0 0px 0'}),
+                                dcc.Graph(figure=figures[2], style={'marginTop': '0'}),
+                            ],
+                            style={"flexBasis": "calc(50% - 5px)", "boxSizing": "border-box", "margin": "0"}
+                        ),
+                        # Gráfico 4 (Quickshift)
+                        html.Div(
+                            children=[
+                                dmc.Text("Resultado de Quickshift", size="sm", style={'margin': '0 0 0px 0'}),
+                                dcc.Graph(figure=figures[3], style={'marginTop': '0'}),
+                            ],
+                            style={"flexBasis": "calc(50% - 5px)", "boxSizing": "border-box", "margin": "0"}
+                        ),
                     ],
-                        style={"width": "50%", "display": "inline-block"}
-                ),
-                html.Div(
-                    children=[
-                        dmc.Text(f"Resultado de HDBSCAN", size="sm", mt="xs"),
-                      #  dmc.Text(f" n_min: {param[0]['n_min']}, porcentaje:{param[1]} ", size="sm", mt="xs"),
-
-                        dcc.Graph(figure=figures[1]),  # HDBSCAN
-                    ],
-                    style={"width": "50%", "display": "inline-block"}
-                ),
-                html.Div(
-                    children=[
-                        dmc.Text("Resultado de Density Peak", size="sm", mt="xs"),
-                        #dmc.Text(f" n_clusters: {param[0]['n_clusters']},d_percent: {param[0]['d_percent']}, porcentaje:{param[1]} ",size="sm", mt="xs"),
-
-                        dcc.Graph(figure=figures[2]),  # Density Peak
-                    ],
-                    style={"width": "50%", "display": "inline-block"}
-                ),
-                html.Div(
-                    children=[
-                        dmc.Text("Resultado de Quickshift", size="sm", mt="xs"),
-                      #  dmc.Text(f" n_min: {param[0]['n_min']},sigma: {param[0]['sigma']}, porcentaje:{param[1]} ",size="sm", mt="xs"),
-
-                        dcc.Graph(figure=figures[3]),  # Quickshift
-
-                    ],
-                    style={"width": "50%", "display": "inline-block"}
-                ),
-            ],
-
+                    style={"display": "flex", "flexWrap": "wrap", "gap": "1px", "justifyContent": "center"}
+                )
+            ]
         )
-    ],
-    shadow="sm",
-    radius="md",
-    p="md",
-    withBorder=True
 )
-
+"""
 def table_page(CSV):
     df_log = pd.read_csv(CSV, encoding="latin1")
     df_log["Aciertos (%)"] = pd.to_numeric(df_log["Aciertos (%)"], errors="coerce")
@@ -690,6 +742,50 @@ def table_page(CSV):
     )
     return tabla
 
+"""
+
+
+def table_page(CSV):
+    df_log = pd.read_csv(CSV, encoding="latin1")
+
+    df_log["Aciertos (%)"] = pd.to_numeric(df_log["Aciertos (%)"], errors="coerce")
+
+    df_log["Destacado"] = 0
+    idx_max = df_log.groupby(["Dataset", "Algoritmo"])["Aciertos (%)"].idxmax()
+    df_log.loc[idx_max, "Destacado"] = 1
+
+    # --- CORRECTION: Remove the 'sortable' key from the column list ---
+    columns_list = []
+    for col in df_log.columns:
+        if col != "Destacado":
+            # The 'sortable' key is not needed here
+            columns_list.append({"name": col, "id": col})
+
+    tabla = dash_table.DataTable(
+        id='datatable-interactivity',
+        columns=columns_list,
+        data=df_log.to_dict('records'),
+        sort_action="native",  # This property enables sorting for all columns
+        sort_mode="multi",
+        style_data_conditional=[
+            {
+                'if': {'filter_query': '{Destacado} = 1'},
+                'backgroundColor': '#d4edda',
+                'color': 'black',
+                'fontWeight': 'bold'
+            }
+        ],
+        style_header={
+            'backgroundColor': 'rgb(230, 230, 230)',
+            'fontWeight': 'bold',
+            'textAlign': 'left'
+        },
+        style_cell={
+            'textAlign': 'left'
+        }
+    )
+    return tabla
+
 def parse_contents(contents, filename):
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
@@ -701,7 +797,7 @@ def parse_contents(contents, filename):
         with open(file_path, 'wb') as f:
             f.write(decoded)
         if 'csv' in filename or 'txt' in filename:
-            df_uploaded = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+            df_uploaded = pd.read_csv(io.StringIO(decoded.decode('utf-8')), encoding="latin1")
             # Validar que el archivo contenga las columnas requeridas
             required_columns = ['x', 'y', 'group']
             if all(col in df_uploaded.columns for col in required_columns):
@@ -709,16 +805,10 @@ def parse_contents(contents, filename):
                 # Si multiple=True, considera un esquema de nombres más robusto (ej. 'Upload_nombre_archivo')
               #  datasets['Upload_latest'] = df_uploaded  # Se usará 'Upload_latest' para el último archivo válido subido
                 return df_uploaded,html.Div([
-                    html.H5(f"Archivo cargado correctamente: {filename}"),
-                    html.P("Contiene las columnas 'x', 'y', 'group'."),
-                    html.P(f"El DataFrame ha sido guardado en 'datasets['Upload_latest']'."),
-                    html.Hr(),
-                    html.H4("Primeras 5 filas del archivo subido:"),
-                    dash.dash_table.DataTable(
-                        data=df_uploaded.head().to_dict('records'),
-                        columns=[{'name': i, 'id': i} for i in df_uploaded.columns],
-                        style_table={'overflowX': 'auto'}
-                    )
+                    html.H5(f"El archivo {filename} cumple condiciones. Ha sido cargado correctamente",style={'color': 'green'}),
+
+                
+
                 ]), True
             else:
                 return None, html.Div([
@@ -740,6 +830,160 @@ def parse_contents(contents, filename):
             html.P(f"Detalle del error: {e}")
         ], style={'color': 'red'}), False
 
+def grafico_barras_juntas(CSV_LOG_PATH):
+    try:
+        df = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
+    except FileNotFoundError:
+        print(f"Error: El archivo CSV no se encontró en la ruta: {CSV_LOG_PATH}")
+        return pgo.Figure().add_annotation(text=f"Error: Archivo no encontrado en '{CSV_LOG_PATH}'")
+    except Exception as e:
+        print(f"Error al leer el archivo CSV: {e}")
+        return pgo.Figure().add_annotation(text=f"Error al leer el CSV: {e}")
+
+    required_columns = ['Algoritmo', 'Parámetros', 'Aciertos (%)', 'Dataset']
+    if not all(col in df.columns for col in required_columns):
+        missing = [col for col in required_columns if col not in df.columns]
+        print(f"Error: El CSV debe contener las columnas: {required_columns}. Faltan: {missing}")
+        return pgo.Figure().add_annotation(text=f"Error: CSV incompleto. Faltan columnas: {missing}")
+
+    df['Aciertos (%)'] = pd.to_numeric(df['Aciertos (%)'], errors='coerce')
+    df.dropna(subset=['Aciertos (%)'], inplace=True)
+    df = df.sort_values(by=['Dataset', 'Algoritmo', 'Parámetros']).reset_index(
+        drop=True)
+
+    gap_size = 0.5
+
+    df['plot_x'] = 0.0
+    facet_tick_data = {}
+
+    algo_counts = df.groupby(['Dataset', 'Algoritmo'])['Parámetros'].nunique().reset_index()
+
+    for dataset_name, algo_group in algo_counts.groupby('Dataset'):
+        current_x_position = 0
+        local_x_tickvals = []
+        local_x_ticktext = []
+
+        for _, row in algo_group.iterrows():
+            algo_name = row['Algoritmo']
+            num_params = row['Parámetros']
+
+            df_subset_index = df[(df['Dataset'] == dataset_name) & (df['Algoritmo'] == algo_name)].index
+            df.loc[df_subset_index, 'param_index'] = df.loc[df_subset_index].groupby(
+                ['Dataset', 'Algoritmo']).cumcount()
+            df.loc[df_subset_index, 'plot_x'] = current_x_position + df.loc[df_subset_index, 'param_index']
+
+            center_x = current_x_position + (num_params - 1) / 2
+            local_x_tickvals.append(center_x)
+            local_x_ticktext.append(algo_name)
+
+            current_x_position += num_params + gap_size
+
+        facet_tick_data[dataset_name] = {'vals': local_x_tickvals, 'text': local_x_ticktext}
+
+    fig = px.bar(df,
+                 x="plot_x",
+                 y="Aciertos (%)",
+                 color="Algoritmo",
+                 facet_col="Dataset",
+                 hover_data=["Algoritmo", "Parámetros", "Aciertos (%)", "Dataset"],
+                 title="Porcentaje de aciertos de Algoritmos por Parámetro y Dataset")
+
+    fig.update_traces(width=1)
+
+    for i, dataset_name in enumerate(df['Dataset'].unique()):
+        xaxis_key = 'xaxis' if i == 0 else f'xaxis{i + 1}'
+
+        tick_data = facet_tick_data.get(dataset_name, {'vals': [], 'text': []})
+
+        fig.layout[xaxis_key].update(
+            tickmode='array',
+            tickvals=tick_data['vals'],
+            ticktext=tick_data['text'],
+            title_text='Algoritmo',
+            matches=None,
+            tickangle=90
+        )
+
+    fig.update_layout(height=500)
+
+    return fig
+
+def dispersion_puntos(csv):
+    try:
+        df = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
+    except FileNotFoundError:
+        print(f"Error: El archivo CSV no se encontró en la ruta: {CSV_LOG_PATH}")
+        return pgo.Figure().add_annotation(text=f"Error: Archivo no encontrado en '{CSV_LOG_PATH}'")
+    except Exception as e:
+        print(f"Error al leer el archivo CSV: {e}")
+        return pgo.Figure().add_annotation(text=f"Error al leer el CSV: {e}")
+
+    required_columns = ['Algoritmo', 'Parámetros', 'Aciertos (%)', 'Dataset']
+    if not all(col in df.columns for col in required_columns):
+        missing = [col for col in required_columns if col not in df.columns]
+        print(f"Error: El CSV debe contener las columnas: {required_columns}. Faltan: {missing}")
+        return pgo.Figure().add_annotation(text=f"Error: CSV incompleto. Faltan columnas: {missing}")
+
+    df['Aciertos (%)'] = pd.to_numeric(df['Aciertos (%)'], errors='coerce')
+    df.dropna(subset=['Aciertos (%)'], inplace=True)
+    df = df.sort_values(by=['Dataset', 'Algoritmo', 'Parámetros']).reset_index(drop=True)
+
+    # Convertir 'Parámetros' a una cadena para tratarlos como categorías
+    df['Parámetros'] = df['Parámetros'].astype(str)
+
+    # Parámetros para el espaciado
+    algorithm_zone_buffer = 0.5  # Espacio entre grupos de algoritmos
+    bar_width = 1  # Ancho de cada barra
+
+    unique_datasets = df['Dataset'].unique()
+    unique_algorithms = df['Algoritmo'].unique()
+
+    # Preparar el dataframe para la visualización
+    x_positions = {}
+    x_tickvals = []
+    x_ticktext = []
+    current_x_position = 0.0
+
+    for algo in unique_algorithms:
+        params_in_algo = sorted(df[df['Algoritmo'] == algo]['Parámetros'].unique())
+
+        # Mapear cada parámetro a una posición consecutiva
+        for i, param in enumerate(params_in_algo):
+            x_positions[(algo, param)] = current_x_position + i * bar_width
+
+        # Calcular el centro de la zona del algoritmo para la etiqueta
+        num_params = len(params_in_algo)
+        center_of_zone = current_x_position + (num_params * bar_width) / 2
+        x_tickvals.append(center_of_zone)
+        x_ticktext.append(algo)
+
+        # Avanzar la posición para el siguiente algoritmo
+        current_x_position += num_params * bar_width + algorithm_zone_buffer
+
+    # Crear la columna 'plot_x'
+    df['plot_x'] = df.apply(lambda row: x_positions[(row['Algoritmo'], row['Parámetros'])], axis=1)
+
+    # Crear la figura sin el parámetro `width`
+    fig = px.bar(df,
+                 x="plot_x",
+                 y="Aciertos (%)",
+                 color="Algoritmo",
+                 facet_col="Dataset",
+                 hover_data=["Algoritmo", "Parámetros", "Aciertos (%)", "Dataset"],
+                 title="Rendimiento de Algoritmos por Parámetro y Porcentaje de Aciertos por Dataset")
+
+    fig.update_traces(width=bar_width)
+    fig.update_layout(
+        xaxis={
+            'tickmode': 'array',
+            'tickvals': x_tickvals,
+            'ticktext': x_ticktext,
+            'title_text': ''
+        },
+        height=500
+    )
+
+    return fig
 
 @app.callback(
     Output("page-content", "children"),
@@ -751,10 +995,10 @@ def mostrar_pagina(pathname):
         return dmc.Paper(
             # The style dictionary should be a direct argument to dmc.Paper,
             # not inside the children list or after other children.
-            style={'fontFamily': 'Inter, sans-serif', 'padding': '20px', 'backgroundColor': '#f9f9f9',
+            style={'fontFamily': 'Inter, sans-serif', 'padding': '10px', 'padding-top': '10px','backgroundColor': '#f9f9f9',
                    'borderRadius': '10px', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'},
             children=[
-                html.H1("Dash App con Carga de Archivos y Gestión de Datasets",
+                html.H1("Carga de Archivos y Gestión de Datasets",
                         style={'textAlign': 'center', 'color': '#333'}),
 
                 html.Div([
@@ -811,14 +1055,11 @@ def mostrar_pagina(pathname):
                 ], style={'padding': '20px', 'border': '1px solid #e0e0e0', 'borderRadius': '10px',
                           'marginBottom': '30px'}),
 
-                html.Hr(style={'margin': '30px 0', 'borderColor': '#eee'}),
+                #html.Hr(style={'margin': '30px 0', 'borderColor': '#eee'}),
 
-                html.H3("Estado de los Datasets Cargados:", style={'color': '#555'}),
-                html.Div(id='datasets-status',
-                         style={'padding': '10px', 'border': '1px solid #ddd', 'borderRadius': '5px',
-                                'backgroundColor': '#fff'}),
 
-                html.Hr(style={'margin': '30px 0', 'borderColor': '#eee'}),
+
+                html.Hr(style={'margin': '20px 0', 'borderColor': '#eee'}),
 
                 html.H3("Selecciona un Dataset:", style={'color': '#555'}),
                 dcc.Dropdown(
@@ -853,67 +1094,101 @@ def mostrar_pagina(pathname):
             ]
         )
     if pathname == "/algorithm_use":
-       # return dmc.Paper(
-        #    children=[
-         #       algorithm_representation
-          #  ],
-           # p="md",
-            #shadow="sm",
-           # radius="md",)
+
         return dmc.Paper(
-            children=[html.Div([
-            html.H3(html.H2("Visualizador de Datasets"),
+            children=[
+                html.Div([
 
-                        # Selector de dataset
 
-                        "Selecciona los datos y el metodo de clusterizacion"),
-                        dcc.Dropdown(
-                                id='data_dropdown',
+                    # Use dmc.Group to place the label and dropdown on the same line
+                    dmc.Group([  # Este es el contenedor FLEX para las dos parejas
+
+                        # --- Primera pareja: Label y Dropdown de selección de dataset ---
+                        html.Div([  # ESTE DIV CONTIENE EL LABEL Y EL DROPDOWN DE LA PRIMERA PAREJA
+                            html.Label("Selecciona el data set",  # Texto de la etiqueta basado en la imagen
+                                       style={'marginRight': '10px', 'whiteSpace': 'nowrap'}),
+                            dcc.Dropdown(
+                                id='data_dropdown',  # Usar el ID único como acordamos
                                 options=[{'label': k, 'value': k} for k in datasets.keys()],
-                                value=list(datasets.keys())[0]
-                            ),
-                        html.Div(id='dataset_selected'),
-                        html.Label("Selecciona el algoritmo de clustering"),
-                        dcc.Dropdown(
-                            id='algorithm_dropdown',
-                            options=[{'label': k, 'value': k} for k in clust_algorithms],
-                            value='none'  # valor inicial, será actualizado dinámicamente
-                        ),
-                        dcc.Store(id='store-dbscan-parametros'),
-                        dcc.Store(id='clustered_data'),
-                        dbc.Button("Abrir/cerrar parámetros algoritmos", id="btn-popover", n_clicks=0),
-                        dbc.Popover(
-                                [
-                                    dbc.PopoverHeader("Parámetros algoritmos"),
-                                    dbc.PopoverBody([
-                                        dbc.PopoverBody(id="popover-body"),  # ← Este es dinámico
+                                value=list(datasets.keys())[0] if datasets else None,
+                                clearable=False,
+                                style={'minWidth': '150px', 'flexGrow': 1}
+                                # flexGrow permite que el dropdown se expanda
+                            )
+                        ], style={'display': 'flex', 'alignItems': 'center', 'flexGrow': 1, 'flexShrink': 0}),
+                        # display:flex para alinear el label y el dropdown. flexShrink:0 para que no se contraiga.
+                        # --- IMPORTANTE: COMA AQUÍ para separar este Div del siguiente ---
+                        # COMA FALTANTE --> ,
 
-                                    ])
-                                ],
-                                id="popover-dbscan",
-                                target="btn-popover",  # Ancla el popover al botón
-                               # trigger="click",       # Se abre al hacer clic
-                                placement="bottom",    # Aparece debajo del botón
-                                is_open=False,          # Estado inicial cerrado
-                                style={
-                                        "backgroundColor": "white",
-                                        "padding": "15px",
-                                        "borderRadius": "10px",
-                                        "boxShadow": "0px 4px 8px rgba(0, 0, 0, 0.2)",
-                                        "zIndex": 2000  # Asegura que se superponga a lo de detrás
-                                    }
-                            ),
-                       html.Hr(),
+                        # --- Segunda pareja: Label y Dropdown de selección de algoritmo ---
+                        html.Div([  # ESTE DIV CONTIENE EL LABEL Y EL DROPDOWN DE LA SEGUNDA PAREJA
+                            html.Label("Selecciona el algoritmo de clustering",  # Texto de la etiqueta
+                                       style={'marginRight': '10px', 'whiteSpace': 'nowrap'}),
+                            dcc.Dropdown(
+                                id='algorithm_dropdown',
+                                options=[{'label': k, 'value': k} for k in clust_algorithms],
+                                value='none',
+                                clearable=False,
+                                style={'minWidth': '150px', 'flexGrow': 1}
+                            )
+                        ], style={'display': 'flex', 'alignItems': 'center', 'flexGrow': 1, 'flexShrink': 0}),
+                        # COMA FALTANTE --> , (si hubiera más elementos DENTRO de dmc.Group)
+                        html.Div([ dbc.Button("Abrir/cerrar parámetros algoritmos", id="btn-popover", n_clicks=0),
+                    ],),
+                    ], style={  # Estilo para el dmc.Group (el contenedor principal de las parejas)
+                        'display': 'flex',  # Explícitamente lo pongo como flex, aunque dmc.Group ya debería serlo
+                        'justifyContent': 'flex-start',  # Alinea las parejas al inicio
+                        'gap': '20px',  # Espacio entre la primera y la segunda pareja
+                        'flexWrap': 'nowrap',
+                        # ¡CRUCIAL! Fuerza a que no se envuelvan a una nueva línea si el espacio es limitado
+                        'marginBottom': '20px',  # Espacio debajo de este grupo
+                        'width': '100%'  # Ocupa el 100% del ancho disponible para que flexbox funcione bien
+                    }),
+                    dcc.Store(id='store-dbscan-parametros'),
+                    dcc.Store(id='clustered_data'),
+
+                    dbc.Popover(
+                        [
+                            dbc.PopoverHeader("Parámetros algoritmos"),
+                            dbc.PopoverBody([
+                                dbc.PopoverBody(id="popover-body"),  # ← Este es dinámico
+                            ])
+                        ],
+                        id="popover-dbscan",
+                        target="btn-popover",  # Ancla el popover al botón
+                        # trigger="click",       # Se abre al hacer clic
+                        placement="bottom",  # Aparece debajo del botón
+                        is_open=False,  # Estado inicial cerrado
+                        style={
+                            "backgroundColor": "white",
+                            "padding": "15px",
+                            "borderRadius": "10px",
+                            "boxShadow": "0px 4px 8px rgba(0, 0, 0, 0.2)",
+                            "zIndex": 2000  # Asegura que se superponga a lo de detrás
+                        }
+                    ),
+
                        #dcc.Graph(id="scatter-plot"),
                         html.Div([
                             html.Div([
                                 dcc.Graph(id='scatter-plot-solution')
-                            ], style={"width": "50%", "display": "inline-block"}),
+                            ], style={"width": "40%", "display": "inline-block"}),
 
                             html.Div([
                                 dcc.Graph(id='scatter-plot-algorithm')
-                            ], style={"width": "50%", "display": "inline-block"}),
-                            html.Div(html.Button("Guardar resultado", id="btn-guardar", n_clicks=0, className="btn btn-success"),)
+                            ], style={"width": "40%", "display": "inline-block"}),
+                            html.Div([  # Este Div es el contenedor del botón
+                                html.Button("Guardar resultado", id="btn-guardar", n_clicks=0,
+                                            className="btn btn-success"),
+                            ], style={
+                                "width": "20%",  # Ocupa el 20% restante del ancho (40% + 40% + 20% = 100%)
+                                "display": "flex",  # Convertimos este Div en un contenedor flex para el botón
+                                "justifyContent": "flex-end",
+                                # ¡Empuja el botón a la derecha dentro de su 20% de espacio!
+                                "alignItems": "center",  # Centra verticalmente el botón dentro de su espacio
+                                'boxSizing': 'border-box',
+                                'paddingRight': '10px'  # Añade un poco de espacio a la derecha del botón
+                            }),
 
                         ], style={"display": "flex"}),
                         dcc.Graph(id='matriz')
@@ -921,89 +1196,200 @@ def mostrar_pagina(pathname):
             p="md",
             shadow="sm",
             radius="md",)
+    if pathname == "/bar_chart":
+        return dmc.Paper(children=[
+
+        dcc.Graph(figure=grafico_barras_juntas(CSV_LOG_PATH)) ],
+            p="md", shadow="sm", radius="md")
+
+    if pathname =="/data_table":
+        return html.Div([
+        html.H2("Tabla de Resultados por Dataset"),
+
+        # Menú desplegable para seleccionar el dataset
+        html.Div([
+            html.Label("Selecciona un Dataset:"),
+            dcc.Dropdown(
+                id='data-table-dropdown',
+                options=[{'label': i, 'value': i} for i in datasets],
+                value=list(datasets.keys())[0] if datasets else None,  # <-- CORRECTED
+                clearable=False
+            )
+        ]),
+
+        # La tabla de resultados se actualizará con el callback
+            dash_table.DataTable(
+                id='table-container',
+                # Este estilo condicional se aplicará a los datos que el callback devuelva
+                style_data_conditional=[
+                    {
+                        'if': {'filter_query': '{Destacado} = 1'},
+                        'backgroundColor': '#d4edda',
+                        'color': 'black',
+                        'fontWeight': 'bold'
+                    }
+                ],
+                # Puedes añadir otros estilos generales aquí
+                style_header={
+                    'backgroundColor': 'rgb(230, 230, 230)',
+                    'fontWeight': 'bold',
+                    'textAlign': 'left'
+                },
+                style_cell={
+                    'textAlign': 'left'
+                }
+            )
+            ])
 
     if pathname == "/general_table":
         tabla=table_page(CSV_LOG_PATH)
         return dmc.Paper([tabla], p="md", shadow="sm", radius="md")
     if pathname.startswith("/comparison_"):
-        # Extraemos el nombre del dataset de la ruta
-        # Por ejemplo, si pathname es "/comparison_circulos", dataset_name será "circulos"
-        dataset_name = pathname.replace("/comparison_", "")
 
+        dataset_name_encoded = pathname.replace("/comparison_", "")
+        dataset_name = urllib.parse.unquote(dataset_name_encoded)
         # Verificamos si este dataset existe en tu diccionario global 'datasets'
-        if dataset_name in datasets:
+        #if dataset_name in datasets:
             # Si existe, llamamos a tus funciones de comparación con el DataFrame y nombre correctos
-            figures = comparison_data(datasets[dataset_name], dataset_name, CSV_LOG_PATH)
-            return figures_comparison(figures, datasets[dataset_name])
-    if  pathname == "/comparison_datos_formas":
-        figures= comparison_data(datasets["Formas"],"Formas",CSV_LOG_PATH)
-        return figures_comparison(figures,datasets["Formas"])
-    if pathname == "/comparison_compound":
-        figures = comparison_data(datasets["Compound"], "Compound", CSV_LOG_PATH)
-        return figures_comparison(figures,datasets["Compound"])
-    if pathname == "/comparison_pathbased":
-        figures = comparison_data(datasets["Pathbased"], "Pathbased", CSV_LOG_PATH)
-        return figures_comparison(figures,datasets["Pathbased"])
+        figures = comparison_data(datasets[dataset_name], dataset_name, CSV_LOG_PATH)
+        return figures_comparison(figures, datasets[dataset_name])
+    if pathname == "/inicio":
+        return display_page_inicio
+    return display_page_inicio
 
-    return dmc.Text("Selecciona una opción del menú.")
+@app.callback(
+    [dash.Output('table-container', 'columns'),
+     dash.Output('table-container', 'data')],
+    [dash.Input('data-table-dropdown', 'value')]
+)
+def update_table(selected_dataset):
+    df_table= pd.read_csv(CSV_LOG_PATH, encoding="latin1")
+
+    if not selected_dataset or df_table.empty:
+        return [], []
+
+    # 1. Filtrar el DataFrame por el dataset seleccionado
+    df_filtered = df_table[df_table['Dataset'] == selected_dataset].copy()
+
+    # 2. Identificar las filas a destacar dentro del subconjunto filtrado
+    df_filtered["Destacado"] = 0
+    idx_max = df_filtered.groupby(["Algoritmo"])["Aciertos (%)"].idxmax()
+    df_filtered.loc[idx_max, "Destacado"] = 1
+
+    # 3. Eliminar la columna 'Dataset' antes de mostrar la tabla
+    df_filtered = df_filtered.drop(columns=['Dataset'])
+
+    # 4. Preparar las columnas para el DataTable
+    columns = []
+    for col in df_filtered.columns:
+        if col != "Destacado":
+            if col == "Parametros":
+                columns.append({"name": col, "id": col, "sortable": False})
+            else:
+                columns.append({"name": col, "id": col})
+
+    # 5. Preparar los datos para el DataTable
+    data = df_filtered.to_dict('records')
+
+    return columns, data
 
 
 @app.callback(
     Output('output-delete-status', 'children'),  # Para mensajes de feedback al usuario
+
+    Output('output-delete-status', 'style'),  # Para mensajes de feedback al usuario
     Output('dummy-output-for-dropdown-update', 'children', allow_duplicate=True),
     # Para refrescar dropdowns y status (necesita Dash >= 2.9.0)
     Output('selected-dataset-info', 'children', allow_duplicate=True),  # Para limpiar la info del dataset borrado
+    Output('selected-dataset-info', 'style', allow_duplicate=True),
+
     Input('delete-dataset-button', 'n_clicks'),
     State('data_dropdown_upload_page', 'value'),  # Obtiene el valor seleccionado actualmente en el dropdown
     prevent_initial_call=True  # Evita que el callback se dispare al cargar la página inicialmente
 )
 def delete_dataset(n_clicks, selected_dataset_name):
-    # Solo actúa si el botón ha sido clickeado y hay un dataset seleccionado
-    if n_clicks > 0 and selected_dataset_name:
+    visible_style = {'marginTop': '15px', 'padding': '10px', 'border': '1px solid #ddd', 'borderRadius': '5px',
+                     'backgroundColor': '#fff'}
 
-        # 1. Verificar si el dataset es uno de los NO BORRABLES
+    if n_clicks > 0 and selected_dataset_name:
+        # 1. Verificar si el dataset es uno de los NO BORRABLES (esto está bien)
         if selected_dataset_name in NON_DELETABLE_DATASETS:
             return dmc.Text(f"¡Error! No se puede borrar el dataset predefinido '{selected_dataset_name}'.",
                             c="red"), \
+                visible_style, \
                 dash.no_update, \
-                dash.no_update  # dash.no_update para no modificar los otros outputs
+                dash.no_update, \
+                {'display': 'none'}
 
         try:
-            # 2. Eliminar el dataset del diccionario global en memoria
+            # --- NUEVA SECUENCIA DE BORRADO ---
+
+            # Paso A: Eliminar el dataset del diccionario global en memoria
             if selected_dataset_name in datasets:
                 del datasets[selected_dataset_name]
+                print(f"DEBUG: Dataset '{selected_dataset_name}' eliminado de la memoria.")
             else:
-                # Esto no debería ocurrir si el dropdown está actualizado correctamente
+                # Si no está en memoria, no podemos hacer mucho más, es un error
+                print(f"DEBUG: Error: Dataset '{selected_dataset_name}' no encontrado en memoria al intentar borrar.")
                 return dmc.Text(f"Error: Dataset '{selected_dataset_name}' no encontrado en memoria.", c="red"), \
+                    visible_style, \
                     dash.no_update, \
-                    dash.no_update
+                    dash.no_update, \
+                    {'display': 'none'}
 
-            # 3. Eliminar el archivo correspondiente del disco
-            # Asumimos que los datasets subidos se guardan como .csv
+            # Paso B: Eliminar el archivo principal del dataset de UPLOAD_DIRECTORY
             file_path_on_disk = os.path.join(UPLOAD_DIRECTORY, f"{selected_dataset_name}.csv")
             if os.path.exists(file_path_on_disk):
                 os.remove(file_path_on_disk)
                 print(f"DEBUG: Archivo '{file_path_on_disk}' eliminado del disco.")
             else:
-                print(
-                    f"DEBUG: Advertencia: Archivo '{file_path_on_disk}' no encontrado en disco, pero eliminado de memoria.")
 
-            # 4. Proporcionar feedback al usuario y disparar actualizaciones de la UI
+                print(
+                    f"DEBUG: Advertencia: Archivo '{file_path_on_disk}' no encontrado en disco. No se pudo eliminar físicamente.")
+                return dmc.Text(f"Advertencia: Archivo no encontrado en disco, borrado de memoria y log.", c="orange"), \
+                    visible_style, \
+                    "deleted", \
+                    html.Div("Dataset borrado. Selecciona otro dataset."), \
+                    visible_style
+
+            # Paso C: Eliminar las entradas relacionadas del CSV_LOG_PATH
+            # Asegúrate de que CSV_LOG_PATH esté definida y accesible
+            # CSV_LOG_PATH = "ruta/a/tu/archivo_log.csv"
+            df_csv_log = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
+
+            COLUMNA_DATASET_EN_LOG = 'Dataset'  # <--- Asegúrate que este sea el nombre correcto de la columna en tu log CSV
+
+            if COLUMNA_DATASET_EN_LOG in df_csv_log.columns:
+                initial_rows_count = len(df_csv_log)
+                df_csv_log = df_csv_log[df_csv_log[COLUMNA_DATASET_EN_LOG] != selected_dataset_name]
+                deleted_rows_count = initial_rows_count - len(df_csv_log)
+                df_csv_log.to_csv(CSV_LOG_PATH, index=False)  # Guardar los cambios al disco
+                print(f"DEBUG: Eliminadas {deleted_rows_count} filas de '{selected_dataset_name}' del CSV log.")
+            else:
+                print(
+                    f"DEBUG: Advertencia: Columna '{COLUMNA_DATASET_EN_LOG}' no encontrada en log CSV. No se borró info relacionada.")
+
+            # Proporcionar feedback final al usuario y disparar actualizaciones de la UI
             print(f"DEBUG: Dataset '{selected_dataset_name}' borrado exitosamente y archivos.")
             return dmc.Text(f"Dataset '{selected_dataset_name}' borrado exitosamente.", c="green"), \
+                visible_style,\
                 "deleted", \
-                html.Div("Dataset borrado. Selecciona otro dataset.")  # Limpiar el panel de información
+                html.Div("Dataset borrado. Selecciona otro dataset."), \
+                visible_style
 
         except Exception as e:
+            # Captura cualquier otro error que pueda ocurrir durante el proceso de borrado
             print(f"DEBUG: Error inesperado al borrar dataset '{selected_dataset_name}': {e}")
             return dmc.Text(f"Error al borrar dataset '{selected_dataset_name}': {e}", c="red"), \
+                visible_style, \
                 dash.no_update, \
-                dash.no_update  # Mantener el estado actual de los otros outputs
+                dash.no_update, \
+                {'display': 'none'}
 
     # Valores por defecto si no se clickea el botón o no hay selección válida
-    return "", dash.no_update, dash.no_update
+    return None, {'display': 'none'}, dash.no_update, dash.no_update, {'display': 'none'}
 
-
+    #return "", dash.no_update, dash.no_update
 @app.callback(
     Output('output-upload-status', 'children'),
     Output('temp-dataframe-storage', 'data'), # Almacena el DataFrame como JSON
@@ -1186,7 +1572,7 @@ def display_popover(n_clicks, ids,valores):
 
 )
 def print_dots(dataset_value,algorithm,dbscan_params):
-    df=datasets[dataset_value]
+    df=datasets[dataset_value].copy()
 
     eps = dbscan_params.get('eps', 1.1) if dbscan_params else 1.1
     n_min = dbscan_params.get('n_min', 5) if dbscan_params else 5
@@ -1195,16 +1581,15 @@ def print_dots(dataset_value,algorithm,dbscan_params):
     influencia = dbscan_params.get('sigma', 1) if dbscan_params else 1
 
     coords=df[['x','y']]
-
+    df["grupo_clust"] = df["group"]
     if "grupo_manual" not in df.columns:
         df["grupo_manual"] = df["group"]
-    figure_solution = px.scatter(df, x="x", y="y", color="group",
-                                hover_data=["group", "grupo_manual"])
-    if algorithm == 'none':
+        df["grupo real"] = df["group"]
+    figure_solution = px.scatter(df, x="x", y="y", color="grupo real",
+                                hover_data=["grupo real"])
 
-        figure_algorithm = px.scatter(df, x="x", y="y", color="group",
-                            hover_data=["group","grupo_manual"])
-    elif algorithm == 'DBscan':
+
+    if algorithm == 'DBscan':
         dbscan = DBSCAN(eps=eps, min_samples=n_min)
         df["grupo_clust"] = dbscan.fit_predict(coords)
 
@@ -1234,8 +1619,9 @@ def print_dots(dataset_value,algorithm,dbscan_params):
 
     df['correct_dot'],df['grupo_clust_reasignado']=order_data(df[["group","grupo_clust","x", "y"]])
 
+
     figure_algorithm = px.scatter(df, x="x", y="y", color="grupo_clust",
-                                  hover_data=["group", "grupo_clust_reasignado", "grupo_clust"])
+                                  hover_data=["group", "grupo_clust"])
     return figure_algorithm,figure_solution,df.to_dict("records")
 
 @app.callback(
@@ -1298,10 +1684,10 @@ def print_matrix(data_drop_down,data_,algorithm_drop_down,params):
         colorbar=dict(title="Número de puntos")
     ))
     fig.update_layout(
-        title="Matriz de comparación manual vs clustering",
+        title="Matriz de confusión manual vs clustering",
         xaxis_title="Grupo algoritmo",
         yaxis_title="Grupo real",
-        height=500
+        height=350
     )
     fig.update_xaxes(
         tickmode='array',
@@ -1316,45 +1702,6 @@ def print_matrix(data_drop_down,data_,algorithm_drop_down,params):
     )
     #fig.update_layout(xaxis_autorange='reversed')
     return fig
-
-"""
-@app.callback(
-    Output("confirmacion-asignacion", "children"),
-    Output("scatter-plot", "figure"),
-    Input("asignar-grupo-btn", "n_clicks"),
-    State("nuevo-grupo", "value"),
-    State("scatter-plot", "selectedData"),
-    prevent_initial_call=True
-)
-def asignar_grupo(n_clicks, nuevo_grupo, selectedData):
-    print('assing group')
-    print(selectedData)
-    print('----------------------')
-    if not nuevo_grupo:
-        return "Por favor, ingresa un nuevo grupo.", dash.no_update
-
-    if selectedData and "points" in selectedData:
-        # Extraer los índices de los puntos seleccionados
-        selected_indices = [point["pointIndex"] for point in selectedData["points"]]
-
-        print('selected_indices')
-        print(selected_indices)
-        # Asignar el nuevo grupo a los puntos seleccionados
-        datos.loc[selected_indices, "grupo_manual"] = nuevo_grupo
-        print('datos')
-        print(datos)
-
-        # Actualizar el gráfico de dispersión con los nuevos grupos
-        fig = px.scatter(datos, x="x", y="y", color="group", hover_data=["group","grupo_manual"])
-        print('-------------')
-        print(datos)
-        return f"Grupo '{nuevo_grupo}' asignado correctamente.", fig
-    else:
-        return "No hay puntos seleccionados.", dash.no_update
-
-    # Ejecutar la app
-
-"""
 
 @app.callback(
     #Output("selected-data", "figure"),
@@ -1443,24 +1790,21 @@ def guardar_y_mostrar(n_clicks, dataset, algoritmo, parametros, datos_clusteriza
     fila = {
         "Dataset": dataset,
         "Algoritmo": algoritmo,
-        "Parametros": parametros,
+        "Parámetros": parametros,
         "Aciertos (%)": porcentaje
     }
 
-    # Añadir al CSV
-    #df_log = pd.read_csv(CSV_LOG_PATH)
     try:
         df_log = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
     except FileNotFoundError:
-        df_log = pd.DataFrame(columns=["Dataset", "Algoritmo", "Parametros", "Aciertos (%)"])
+        df_log = pd.DataFrame(columns=["Dataset", "Algoritmo", "Parámetros", "Aciertos (%)"])
     existe = (
             (df_log["Dataset"] == dataset) &
             (df_log["Algoritmo"] == algoritmo) &
-            (df_log["Parametros"].astype(str) == str(parametros))
+            (df_log["Parámetros"].astype(str) == str(parametros))
     ).any()
 
     if not existe:
-       # df_log = pd.read_csv(CSV_LOG_PATH, encoding="latin1")
         df_log = pd.concat([df_log, pd.DataFrame([fila])], ignore_index=True)
         df_log.to_csv(CSV_LOG_PATH, index=False)
     # Ordenar por Dataset y Algoritmo
